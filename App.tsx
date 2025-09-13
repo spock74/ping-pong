@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { GoogleGenAI } from "@google/genai";
 import GameCanvas from './components/GameCanvas';
 import InstructionOverlay from './components/InstructionOverlay';
 import { GAME_HEIGHT, PADDLE_HEIGHT } from './constants';
@@ -7,6 +8,50 @@ import { startAudioContext } from './utils/sounds';
 
 // Declare MediaPipe and its utilities as global variables
 declare const window: any;
+
+// --- Gemini API Logic ---
+let ai: GoogleGenAI | null = null;
+const getAI = () => {
+  if (!ai) {
+    ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+  }
+  return ai;
+};
+
+const generateTaunt = async (): Promise<string> => {
+  try {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: 'Generate a short, witty, retro-arcade style taunt for a human player who just lost a point in Pong. Max 10 words.',
+      config: {
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    });
+    return response.text.trim().replace(/"/g, ''); // Remove quotes from response
+  } catch (error) {
+    console.error("Error generating taunt:", error);
+    return "ERROR_404: WIT_NOT_FOUND";
+  }
+};
+
+const generatePraise = async (): Promise<string> => {
+  try {
+    const ai = getAI();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: 'Generate a short, retro-arcade style message of grudging praise for a human who just scored a point in Pong against an AI. Max 10 words.',
+      config: {
+        thinkingConfig: { thinkingBudget: 0 }
+      }
+    });
+    return response.text.trim().replace(/"/g, ''); // Remove quotes from response
+  } catch (error) {
+    console.error("Error generating praise:", error);
+    return "LUCKY_SHOT...";
+  }
+};
+// --- End Gemini API Logic ---
 
 // --- Gesture Detection Logic ---
 type HandGesture = 'fist' | 'pointer' | 'spread' | 'thumbs_up' | 'thumbs_down' | 'open' | 'unknown';
@@ -116,6 +161,8 @@ const App: React.FC = () => {
   const [webcamReady, setWebcamReady] = useState<boolean>(false);
   const [persistentScore, setPersistentScore] = useState({ player: 0, computer: 0 });
   const [showLandmarks, setShowLandmarks] = useState<boolean>(true); // Default to landmark view
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
+  const aiMessageTimeoutRef = useRef<number | null>(null);
   
   // Calibration State
   const [calibrationStep, setCalibrationStep] = useState<'start' | 'up' | 'down' | 'finished'>('start');
@@ -378,6 +425,38 @@ const App: React.FC = () => {
     }));
   }, []);
 
+  const handlePointScored = useCallback(async (scorer: 'player' | 'computer') => {
+    if (aiMessageTimeoutRef.current) {
+        clearTimeout(aiMessageTimeoutRef.current);
+    }
+    setAiMessage(null); // Clear previous message immediately
+    
+    // Tiny delay to allow React to clear state before setting a new one, ensuring animations restart.
+    setTimeout(async () => {
+        let message = '';
+        if (scorer === 'computer') {
+            message = await generateTaunt();
+        } else {
+            message = await generatePraise();
+        }
+        setAiMessage(message);
+
+        aiMessageTimeoutRef.current = window.setTimeout(() => {
+            setAiMessage(null);
+            aiMessageTimeoutRef.current = null;
+        }, 4000);
+    }, 50);
+  }, []);
+
+  // Clean up timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (aiMessageTimeoutRef.current) {
+        clearTimeout(aiMessageTimeoutRef.current);
+      }
+    };
+  }, []);
+
   const startCalibrationSequence = useCallback(() => {
     calibrationDataRef.current = { min: 1, max: 0 }; // Reset for new capture
     lastHandPositionRef.current = null;
@@ -458,7 +537,21 @@ const App: React.FC = () => {
             setGameStatus={setGameStatus}
             onGameOver={handleGameOver}
             difficulty={difficulty}
+            onPointScored={handlePointScored}
         />
+         {aiMessage && (
+          <div 
+            key={aiMessage} // Use key to force re-render and restart animation
+            className="absolute inset-0 flex items-center justify-center pointer-events-none z-20 animate-fadeInOut"
+          >
+            <p 
+              className="text-4xl font-bold text-yellow-300 text-center px-4" 
+              style={{ textShadow: '0 0 10px #ff0, 0 0 20px #f90' }}
+            >
+              {aiMessage}
+            </p>
+          </div>
+        )}
       </div>
 
       <p className="mt-4 text-sm text-gray-400">Desenvolvido com React, MediaPipe, Tailwind CSS e ❤️ por Zehn & Gemini 2.5-pro</p>

@@ -24,9 +24,10 @@ interface GameCanvasProps {
   setGameStatus: (status: GameStatus) => void;
   onGameOver: (winner: 'player' | 'computer') => void;
   difficulty: Difficulty;
+  onPointScored: (scorer: 'player' | 'computer') => void;
 }
 
-const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty }) => {
+const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty, onPointScored }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameOverInitiated = useRef(false);
   const prevScoreRef = useRef({ player: 0, computer: 0 });
@@ -168,6 +169,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
         // Computer scores
         if (!pointScoredRef.current) {
           pointScoredRef.current = true;
+          onPointScored('computer');
           setScore(prev => ({ ...prev, computer: prev.computer + 1 }));
           playScoreSound();
         }
@@ -175,6 +177,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
         // Player scores
         if (!pointScoredRef.current) {
           pointScoredRef.current = true;
+          onPointScored('player');
           setScore(prev => ({ ...prev, player: prev.player + 1 }));
           playScoreSound();
         }
@@ -202,7 +205,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [status, ball, ballSpeed, playerY, computerY, draw, resetBall, paddleSpeedAI]);
+  }, [status, ball, ballSpeed, playerY, computerY, draw, resetBall, paddleSpeedAI, onPointScored]);
 
   // Reset game state when status changes
   useEffect(() => {
