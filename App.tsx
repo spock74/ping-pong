@@ -3,12 +3,13 @@ import GameCanvas from './components/GameCanvas';
 import InstructionOverlay from './components/InstructionOverlay';
 import { GAME_HEIGHT, PADDLE_HEIGHT } from './constants';
 import type { GameStatus, Difficulty, GestureType } from './types';
+import { startAudioContext } from './utils/sounds';
 
 // Declare MediaPipe and its utilities as global variables
 declare const window: any;
 
 // --- Gesture Detection Logic ---
-type HandGesture = 'fist' | 'pointer' | 'spread' | 'stop' | 'open' | 'unknown';
+type HandGesture = 'fist' | 'pointer' | 'spread' | 'thumbs_up' | 'thumbs_down' | 'open' | 'unknown';
 
 const detectGesture = (landmarks: any[]): HandGesture => {
     if (!landmarks || landmarks.length < 21) {
@@ -36,34 +37,51 @@ const detectGesture = (landmarks: any[]): HandGesture => {
     const isMiddleExtended = landmarks[MIDDLE_FINGER_TIP].y < landmarks[MIDDLE_FINGER_PIP].y;
     const isRingExtended = landmarks[RING_FINGER_TIP].y < landmarks[RING_FINGER_PIP].y;
     const isPinkyExtended = landmarks[PINKY_TIP].y < landmarks[PINKY_PIP].y;
-    // For selfie mode, a lower X value means the thumb is extended away from the palm
-    const isThumbExtended = landmarks[THUMB_TIP].x < landmarks[THUMB_IP].x;
+    const isThumbExtended = landmarks[THUMB_TIP].x < landmarks[THUMB_IP].x; // For selfie mode, lower X is away from palm
+    const isThumbDown = landmarks[THUMB_TIP].y > landmarks[THUMB_IP].y;
+
+    // Stricter checks for thumb gestures to avoid confusion with fist
+    const isThumbClearlyUp = landmarks[THUMB_TIP].y < landmarks[INDEX_FINGER_PIP].y;
+    const isThumbClearlyDown = landmarks[THUMB_TIP].y > landmarks[MIDDLE_FINGER_MCP].y;
 
     const allFingersExtended = isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended;
 
     // --- Finger curled checks ---
-    const areOthersCurledForPointer =
+    const areFingersCurled = 
+        landmarks[INDEX_FINGER_TIP].y > landmarks[INDEX_FINGER_PIP].y &&
         landmarks[MIDDLE_FINGER_TIP].y > landmarks[MIDDLE_FINGER_PIP].y &&
         landmarks[RING_FINGER_TIP].y > landmarks[RING_FINGER_PIP].y &&
         landmarks[PINKY_TIP].y > landmarks[PINKY_PIP].y;
 
-    const isFist =
-        landmarks[INDEX_FINGER_TIP].y > landmarks[INDEX_FINGER_PIP].y &&
-        areOthersCurledForPointer;
+    const areOthersCurledForPointer =
+        landmarks[MIDDLE_FINGER_TIP].y > landmarks[MIDDLE_FINGER_PIP].y &&
+        landmarks[RING_FINGER_TIP].y > landmarks[RING_FINGER_PIP].y &&
+        landmarks[PINKY_TIP].y > landmarks[PINKY_PIP].y;
     
     // --- Gesture recognition (ordered by specificity) ---
 
-    // 1. Pointer
+    // 1. Thumbs up (Stricter)
+    if (isThumbClearlyUp && areFingersCurled) {
+        return 'thumbs_up';
+    }
+
+    // 2. Thumbs down (Stricter)
+    if (isThumbDown && isThumbClearlyDown && areFingersCurled) {
+        return 'thumbs_down';
+    }
+
+    // 3. Pointer
     if (isIndexExtended && areOthersCurledForPointer) {
         return 'pointer';
     }
 
-    // 2. Fist
-    if (isFist) {
+    // 4. Fist
+    // This will now be correctly identified, as the stricter thumb checks above will fail for a standard fist.
+    if (areFingersCurled) {
         return 'fist';
     }
 
-    // 3. Open hand gestures (Stop / Spread)
+    // 5. Open hand gestures (Spread)
     if (allFingersExtended && isThumbExtended) {
         // Calculate a reference distance for spread, e.g., palm height
         const palmHeight = Math.hypot(
@@ -79,14 +97,9 @@ const detectGesture = (landmarks: any[]): HandGesture => {
 
         // Heuristic thresholds based on palm height
         const SPREAD_THRESHOLD = palmHeight * 1.1;
-        const STOP_THRESHOLD = palmHeight * 0.7;
         
         if (spreadDistance > SPREAD_THRESHOLD) {
             return 'spread';
-        }
-        
-        if (spreadDistance < STOP_THRESHOLD) {
-            return 'stop';
         }
     }
     
@@ -105,12 +118,15 @@ const App: React.FC = () => {
   const [showLandmarks, setShowLandmarks] = useState<boolean>(true); // Default to landmark view
   
   // Calibration State
-  const [isCalibrating, setIsCalibrating] = useState(false);
+  const [calibrationStep, setCalibrationStep] = useState<'start' | 'up' | 'down' | 'finished'>('start');
   const [calibrationRange, setCalibrationRange] = useState({ min: 1, max: 0 });
   const [calibrationHistory, setCalibrationHistory] = useState<{min: number, max: number}[]>([]);
   const [showCalibrationSuccess, setShowCalibrationSuccess] = useState(false);
   const calibrationDataRef = useRef({ min: 1, max: 0 });
   const gestureActionLockRef = useRef(false); // Cooldown for pause/reset gestures
+  const lastHandPositionRef = useRef<number | null>(null);
+  const lastValidCalibPositionRef = useRef<number | null>(null); // For gesture-gated calibration
+  const handVisibleRef = useRef<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const landmarkCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -147,6 +163,11 @@ const App: React.FC = () => {
     setCalibrationRange({ min: 1, max: 0 });
     setGameStatus('idle');
   }, []);
+  
+  const startGame = useCallback(() => {
+    startAudioContext(); // Ensure audio context is ready on gesture start
+    setGameStatus('running');
+  }, []);
 
   const onResults = useCallback((results: any) => {
     // Draw hand landmarks on the canvas first, regardless of hand detection
@@ -170,12 +191,23 @@ const App: React.FC = () => {
         canvasCtx.restore();
     }
 
-    // Update game state and player paddle position based on gesture
-    if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+    const handIsCurrentlyVisible = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
+    const handWasPreviouslyVisible = handVisibleRef.current;
+    handVisibleRef.current = handIsCurrentlyVisible;
+
+    // Handle game logic that requires a visible hand
+    if (handIsCurrentlyVisible) {
       const handLandmarks = results.multiHandLandmarks[0];
       const currentGesture = detectGesture(handLandmarks);
+      
+      // During calibration, only track hand position if the gesture is a fist
+      if (gameStatus === 'calibrating' && currentGesture === 'fist') {
+          lastValidCalibPositionRef.current = handLandmarks[0].y;
+      }
+      
+      lastHandPositionRef.current = handLandmarks[0].y; // Update last known position for general use
 
-      // --- Handle Game State Gestures (Pause/Reset) with cooldown ---
+      // --- Handle Game State Gestures (Pause/Reset/Start) with cooldown ---
       if (!gestureActionLockRef.current) {
           if (currentGesture === 'spread') {
               if (gameStatus === 'running') {
@@ -187,24 +219,21 @@ const App: React.FC = () => {
                   gestureActionLockRef.current = true;
                   setTimeout(() => { gestureActionLockRef.current = false; }, 1000);
               }
-          } else if (currentGesture === 'stop') {
+          } else if (currentGesture === 'thumbs_down') {
               handleFullReset();
               gestureActionLockRef.current = true;
               setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown after reset
+          } else if (currentGesture === 'thumbs_up' && gameStatus === 'idle') {
+              startGame();
+              gestureActionLockRef.current = true;
+              setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown
           }
       }
       
       // --- Handle Paddle Movement Gesture ---
       if (currentGesture === gestureType) {
         const wrist = handLandmarks[0];
-
         if (wrist) {
-          if (isCalibrating) {
-            // Record the min/max vertical position during calibration
-            calibrationDataRef.current.min = Math.min(calibrationDataRef.current.min, wrist.y);
-            calibrationDataRef.current.max = Math.max(calibrationDataRef.current.max, wrist.y);
-          }
-          
           const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
           const calibrationSpan = calibrationRange.max - calibrationRange.min;
           let newY: number;
@@ -212,8 +241,10 @@ const App: React.FC = () => {
           // Use calibrated range if it's valid (e.g., covers at least 10% of the screen)
           if (calibrationSpan > 0.1) {
             const normalizedY = (wrist.y - calibrationRange.min) / calibrationSpan;
-            const clampedNormalizedY = Math.max(0, Math.min(1, normalizedY));
-            newY = (clampedNormalizedY * paddleTravelRange) + (PADDLE_HEIGHT / 2);
+            // By not clamping normalizedY here, we allow the user to move past the calibrated
+            // edges, and the final clamping below will hold the paddle at the screen edge.
+            // This makes the controls feel more responsive and forgiving.
+            newY = (normalizedY * paddleTravelRange) + (PADDLE_HEIGHT / 2);
           } else {
             // Fallback to default full-range mapping
             newY = (wrist.y * paddleTravelRange) + (PADDLE_HEIGHT / 2);
@@ -224,15 +255,37 @@ const App: React.FC = () => {
           const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
           const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
 
-          // Apply smoothing to prevent jitter and improve responsiveness
-          setPlayerY(prevY => {
-              const smoothingFactor = 0.4; // Balanced value for responsiveness and smoothness
-              return prevY + (clampedY - prevY) * smoothingFactor;
-          });
+          // Set position directly for immediate response, no smoothing
+          setPlayerY(clampedY);
         }
       }
     }
-  }, [isCalibrating, calibrationRange, gestureType, gameStatus, handleFullReset]);
+
+    // --- New Calibration State Machine ---
+    if (gameStatus === 'calibrating') {
+      // Step 1: Hand was visible and is now not visible (moved off screen)
+      if (handWasPreviouslyVisible && !handIsCurrentlyVisible) {
+        const lastValidY = lastValidCalibPositionRef.current; // Use the gesture-gated position
+        
+        // Check for finishing the 'up' step
+        if (calibrationStep === 'up' && lastValidY !== null && lastValidY < 0.5) {
+          calibrationDataRef.current.min = lastValidY;
+          console.log(`Calibrated TOP boundary at: ${lastValidY}`);
+          setCalibrationStep('down');
+        }
+        
+        // Check for finishing the 'down' step
+        else if (calibrationStep === 'down' && lastValidY !== null && lastValidY > 0.5) {
+          calibrationDataRef.current.max = lastValidY;
+          console.log(`Calibrated BOTTOM boundary at: ${lastValidY}`);
+          setCalibrationStep('finished');
+        }
+
+        // Reset the valid position ref after each capture attempt
+        lastValidCalibPositionRef.current = null;
+      }
+    }
+  }, [calibrationRange, gestureType, gameStatus, handleFullReset, startGame, calibrationStep]);
 
   useEffect(() => {
     if (typeof window.Hands === 'undefined') {
@@ -261,21 +314,26 @@ const App: React.FC = () => {
         const camera = new window.Camera(videoRef.current, {
             onFrame: async () => {
                 if (videoRef.current) {
-                    await hands.send({ image: videoRef.current });
+                    try {
+                        await hands.send({ image: videoRef.current });
+                    } catch (error) {
+                        console.error("Error sending image to MediaPipe Hands:", error);
+                    }
                 }
             },
             width: 1280,
             height: 720,
         });
-        camera.start();
-        setWebcamReady(true);
+        try {
+            camera.start();
+            setWebcamReady(true);
+        } catch (error) {
+            console.error("Failed to start camera. Please ensure permissions are granted and no other application is using the camera.", error);
+            setWebcamReady(false);
+        }
     }
   }, [onResults]);
   
-  const startGame = () => {
-    setGameStatus('running');
-  };
-
   const restartGame = () => {
     setGameStatus('idle');
   };
@@ -287,18 +345,22 @@ const App: React.FC = () => {
     }));
   }, []);
 
-  const handleStartCalibration = () => {
+  const startCalibrationSequence = useCallback(() => {
     calibrationDataRef.current = { min: 1, max: 0 }; // Reset for new capture
-    setIsCalibrating(true);
-    setGameStatus('calibrating');
+    lastHandPositionRef.current = null;
+    lastValidCalibPositionRef.current = null;
+    handVisibleRef.current = false;
+    setCalibrationStep('up');
+  }, []);
 
-    setTimeout(() => {
-        setIsCalibrating(false);
+  useEffect(() => {
+    if (calibrationStep === 'finished') {
         setGameStatus('idle');
+        setCalibrationStep('start'); // Reset for next time
 
         const newRange = calibrationDataRef.current;
         // Check if a valid range was captured
-        if (newRange.max - newRange.min > 0.1) {
+        if (newRange.min < newRange.max && (newRange.max - newRange.min > 0.1)) {
             const newHistory = [...calibrationHistory, newRange];
             setCalibrationHistory(newHistory);
             
@@ -312,10 +374,10 @@ const App: React.FC = () => {
             setShowCalibrationSuccess(true);
             setTimeout(() => setShowCalibrationSuccess(false), 4000);
         } else {
-            console.warn("Calibration failed: insufficient movement detected.");
+            console.warn("Calibration failed: insufficient or invalid movement detected.", newRange);
         }
-    }, 5000); // 5 seconds calibration time
-  };
+    }
+}, [calibrationStep, calibrationHistory]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white font-mono p-4">
@@ -352,7 +414,8 @@ const App: React.FC = () => {
             gestureType={gestureType}
             onGestureTypeChange={setGestureType}
             onCalibrate={() => setGameStatus('calibrating')}
-            onStartCalibration={handleStartCalibration}
+            onStartCalibrationSequence={startCalibrationSequence}
+            calibrationStep={calibrationStep}
             showCalibrationSuccess={showCalibrationSuccess}
           />
         )}

@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import type { GameStatus, Difficulty, GestureType } from '../types';
-import { WINNING_SCORE } from '../constants';
 import { startAudioContext } from '../utils/sounds';
 
 interface InstructionOverlayProps {
@@ -13,7 +12,8 @@ interface InstructionOverlayProps {
   gestureType: GestureType;
   onGestureTypeChange: (type: GestureType) => void;
   onCalibrate: () => void;
-  onStartCalibration: () => void;
+  onStartCalibrationSequence: () => void;
+  calibrationStep: 'start' | 'up' | 'down' | 'finished';
   showCalibrationSuccess: boolean;
 }
 
@@ -39,50 +39,44 @@ const DifficultyButton: React.FC<{
   );
 };
 
-const CalibrationScreen: React.FC<{ onStartCalibration: () => void }> = ({ onStartCalibration }) => {
-    const [countdown, setCountdown] = useState<number | null>(null);
-
-    const handleStart = () => {
-        onStartCalibration();
-        setCountdown(5);
-        const interval = setInterval(() => {
-            setCountdown(prev => {
-                if (prev === null || prev <= 1) {
-                    clearInterval(interval);
-                    return 0;
-                }
-                return prev - 1;
-            });
-        }, 1000);
-    };
-
+const CalibrationScreen: React.FC<{
+  onStartCalibrationSequence: () => void;
+  step: 'start' | 'up' | 'down' | 'finished';
+}> = ({ onStartCalibrationSequence, step }) => {
+  if (step === 'start') {
     return (
-        <div className="flex flex-col items-center justify-center text-center">
-            <h2 className="text-6xl font-bold mb-4" style={{ textShadow: '0 0 10px #0f0' }}>
-                Calibração
-            </h2>
-            {countdown === null ? (
-                <>
-                    <p className="text-lg mb-8 max-w-md">
-                        Para definir a área de jogo, mova sua mão lentamente do ponto mais baixo ao mais alto que você usará para controlar a raquete.
-                    </p>
-                    <button onClick={handleStart} className="px-8 py-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]">
-                        Iniciar Calibração
-                    </button>
-                </>
-            ) : (
-                <>
-                    <p className="text-2xl mb-4">Continue movendo sua mão...</p>
-                    <div className="text-9xl font-bold text-lime-400" style={{ textShadow: '0 0 20px #0f0' }}>
-                        {countdown > 0 ? countdown : 'Feito!'}
-                    </div>
-                </>
-            )}
-        </div>
+      <div className="flex flex-col items-center justify-center text-center">
+        <h2 className="text-6xl font-bold mb-4" style={{ textShadow: '0 0 10px #0f0' }}>
+          Calibração
+        </h2>
+        <p className="text-lg mb-8 max-w-md">
+          Vamos mapear sua área de movimento em um único gesto para um controle perfeito.
+        </p>
+        <button onClick={onStartCalibrationSequence} className="px-8 py-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]">
+          Iniciar
+        </button>
+      </div>
     );
+  }
+
+  if (step === 'up' || step === 'down') {
+    return (
+      <div className="flex flex-col items-center justify-center text-center">
+        <h2 className="text-5xl font-bold mb-4 text-lime-400 animate-pulse" style={{ textShadow: '0 0 10px #0f0' }}>
+          {step === 'up' ? 'Mova para CIMA ⬆️' : 'Agora para BAIXO ⬇️'}
+        </h2>
+        <p className="text-lg mt-4 max-w-md">
+          Com a <span className="font-bold text-yellow-300">mão fechada</span>, mova-a lentamente até que desapareça completamente da tela.
+        </p>
+      </div>
+    );
+  }
+
+  return null;
 };
 
-const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamReady, onStart, onRestart, difficulty, onDifficultyChange, gestureType, onGestureTypeChange, onCalibrate, onStartCalibration, showCalibrationSuccess }) => {
+
+const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamReady, onStart, onRestart, difficulty, onDifficultyChange, gestureType, onGestureTypeChange, onCalibrate, onStartCalibrationSequence, calibrationStep, showCalibrationSuccess }) => {
   const isIdle = status === 'idle';
   const isOver = status === 'over';
   const isPaused = status === 'paused';
@@ -95,7 +89,10 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
   if (status === 'calibrating') {
     return (
       <div className="absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center p-8 z-10">
-        <CalibrationScreen onStartCalibration={onStartCalibration} />
+        <CalibrationScreen 
+          onStartCalibrationSequence={onStartCalibrationSequence}
+          step={calibrationStep}
+        />
       </div>
     );
   }
@@ -121,11 +118,11 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
       
       {isIdle && (
         <>
-          <p className="text-lg mb-6 max-w-2xl">
-            Controle a raquete <span className="text-lime-400 font-bold">verde</span> com o gesto selecionado.
-            Pause com a <span className="text-yellow-400 font-bold">mão espalhada</span>.
-            Resete com o sinal de <span className="text-red-500 font-bold">pare</span>.
-            O primeiro a fazer {WINNING_SCORE} pontos vence!
+          <p className="text-lg mb-6 max-w-2xl leading-relaxed">
+            Controle a raquete <span className="text-lime-400 font-bold">verde</span> com o gesto selecionado. <br />
+            Faça um <span className="text-blue-400 font-bold">joinha (👍)</span> para iniciar.
+            Pause com a <span className="text-yellow-400 font-bold">mão espalhada 🖐️</span>.
+            Resete com o <span className="text-red-500 font-bold">polegar para baixo (👎)</span>.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">

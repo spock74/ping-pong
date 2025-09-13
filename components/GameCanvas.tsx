@@ -14,6 +14,7 @@ import {
   playWallHit,
   playScoreSound,
   playGameOverSound,
+  resetGameOverSoundLock,
 } from '../utils/sounds';
 
 
@@ -28,6 +29,8 @@ interface GameCanvasProps {
 const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameOverInitiated = useRef(false);
+  const prevScoreRef = useRef({ player: 0, computer: 0 });
+  const pointScoredRef = useRef(false); // Lock to prevent multiple scores per point
 
   const { paddleSpeedAI, initialBallSpeedX } = DIFFICULTY_SETTINGS[difficulty];
 
@@ -35,11 +38,19 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
   const [ballSpeed, setBallSpeed] = useState({ vx: initialBallSpeedX, vy: 2 });
   const [computerY, setComputerY] = useState(GAME_HEIGHT / 2 - PADDLE_HEIGHT / 2);
   const [score, setScore] = useState({ player: 0, computer: 0 });
+  const [isReady, setIsReady] = useState(false); // New state to prevent race condition
 
   const resetBall = useCallback((direction: number) => {
     setBall({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
-    const randomVy = Math.random() * 4 - 2; // -2 to 2
-    setBallSpeed({ vx: initialBallSpeedX * direction, vy: randomVy });
+    
+    // New vertical speed calculation to ensure a minimum speed
+    const MIN_ABS_VY = 1.5;
+    const MAX_ABS_VY = 3.5;
+    let vy = Math.random() * (MAX_ABS_VY - MIN_ABS_VY) + MIN_ABS_VY;
+    if (Math.random() < 0.5) {
+      vy = -vy;
+    }
+    setBallSpeed({ vx: initialBallSpeedX * direction, vy: vy });
   }, [initialBallSpeedX]);
 
   const draw = useCallback((ctx: CanvasRenderingContext2D) => {
@@ -154,17 +165,17 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
 
       // 4. Scoring
       if (nextBall.x < 0) {
-        const newComputerScore = score.computer + 1;
-        setScore(prev => ({ ...prev, computer: newComputerScore }));
-        resetBall(1);
-        if (newComputerScore < WINNING_SCORE) {
+        // Computer scores
+        if (!pointScoredRef.current) {
+          pointScoredRef.current = true;
+          setScore(prev => ({ ...prev, computer: prev.computer + 1 }));
           playScoreSound();
         }
       } else if (nextBall.x > GAME_WIDTH) {
-        const newPlayerScore = score.player + 1;
-        setScore(prev => ({ ...prev, player: newPlayerScore }));
-        resetBall(-1);
-        if (newPlayerScore < WINNING_SCORE) {
+        // Player scores
+        if (!pointScoredRef.current) {
+          pointScoredRef.current = true;
+          setScore(prev => ({ ...prev, player: prev.player + 1 }));
           playScoreSound();
         }
       } else {
@@ -191,35 +202,69 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [status, ball, ballSpeed, playerY, computerY, score, draw, resetBall, paddleSpeedAI]);
+  }, [status, ball, ballSpeed, playerY, computerY, draw, resetBall, paddleSpeedAI]);
 
   // Reset game state when status changes
   useEffect(() => {
     if (status === 'running') {
       gameOverInitiated.current = false;
-      setScore({ player: 0, computer: 0 });
+      pointScoredRef.current = false; // Reset score lock
+      resetGameOverSoundLock(); // Reset sound lock for new game
+      const newScore = { player: 0, computer: 0 };
+      setScore(newScore);
+      prevScoreRef.current = newScore;
       resetBall(Math.random() > 0.5 ? 1 : -1);
+      setIsReady(true); // Game is ready after reset
+    } else {
+      setIsReady(false); // Not ready if not running
     }
   }, [status, resetBall]);
 
+  // This effect handles resetting the ball after a point is scored.
+  useEffect(() => {
+    if (status !== 'running' || !isReady) return;
+
+    const justScored = score.player !== prevScoreRef.current.player || score.computer !== prevScoreRef.current.computer;
+    
+    if (justScored) {
+        // Don't reset on the winning point. Let the game end naturally.
+        if (score.player < WINNING_SCORE && score.computer < WINNING_SCORE) {
+            const direction = score.player !== prevScoreRef.current.player ? -1 : 1;
+            // Delay allows player to see score update and ball leave screen.
+            setTimeout(() => {
+              resetBall(direction);
+              pointScoredRef.current = false; // Unlock scoring for the next point
+            }, 300);
+        }
+    }
+    // Update the ref for the next render.
+    prevScoreRef.current = score;
+  }, [score, status, resetBall, isReady]);
+
   // Check for winner
   useEffect(() => {
-    if (gameOverInitiated.current) {
+    if (status !== 'running' || !isReady || gameOverInitiated.current) {
         return;
     }
 
+    let winner: 'player' | 'computer' | null = null;
     if (score.player >= WINNING_SCORE) {
-      gameOverInitiated.current = true;
-      setGameStatus('over');
-      onGameOver('player');
-      playGameOverSound();
+      winner = 'player';
     } else if (score.computer >= WINNING_SCORE) {
-      gameOverInitiated.current = true;
-      setGameStatus('over');
-      onGameOver('computer');
-      playGameOverSound();
+      winner = 'computer';
     }
-  }, [score, setGameStatus, onGameOver]);
+    
+    if (winner) {
+      gameOverInitiated.current = true;
+      onGameOver(winner);
+      playGameOverSound();
+      // Brief delay to let the final score register before showing the overlay.
+      // This prevents the game from feeling like it ended abruptly.
+      setTimeout(() => {
+          setGameStatus('over');
+      }, 500);
+    }
+  }, [score, status, setGameStatus, onGameOver, isReady]);
 
   return (
     <canvas

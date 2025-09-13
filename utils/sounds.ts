@@ -9,16 +9,36 @@ let synths: {
 } | null = null;
 
 let isAudioInitialized = false;
+let isGameOverSoundPlayed = false;
+
+// Throttling for hit sounds to prevent Tone.js errors on rapid calls
+let lastPaddleHitTime = 0;
+let lastWallHitTime = 0;
+const HIT_COOLDOWN = 50; // 50ms cooldown for hit sounds
 
 // Function to initialize the synths after Tone.start()
 const initializeSynths = () => {
   if (synths || typeof Tone === 'undefined') return;
 
+  // Create score synth
+  const scoreSynth = new Tone.PolySynth().toDestination();
+  scoreSynth.set({
+    oscillator: { type: 'sine' },
+    envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.2 },
+  });
+
+  // Create game over synth
+  const gameOverSynth = new Tone.PolySynth().toDestination();
+  gameOverSynth.set({
+    oscillator: { type: 'sawtooth' },
+    envelope: { attack: 0.01, decay: 0.4, sustain: 0.1, release: 0.4 },
+  });
+
   synths = {
     paddle: new Tone.Synth({ oscillator: { type: 'square' }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 0.1 } }).toDestination(),
     wall: new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 0.1 } }).toDestination(),
-    score: new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sine' }, envelope: { attack: 0.01, decay: 0.2, sustain: 0.2, release: 0.2 } }).toDestination(),
-    gameOver: new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sawtooth' }, envelope: { attack: 0.01, decay: 0.4, sustain: 0.1, release: 0.4 } }).toDestination(),
+    score: scoreSynth,
+    gameOver: gameOverSynth,
   };
 };
 
@@ -37,14 +57,29 @@ export const startAudioContext = async () => {
   }
 };
 
+/**
+ * Resets the lock for the game over sound, allowing it to be played again in a new game.
+ */
+export const resetGameOverSoundLock = () => {
+  isGameOverSoundPlayed = false;
+};
+
 export const playPaddleHit = () => {
   if (!synths) return;
-  synths.paddle.triggerAttackRelease('C4', '8n');
+  const now = performance.now();
+  if (now - lastPaddleHitTime > HIT_COOLDOWN) {
+    synths.paddle.triggerAttackRelease('C4', '8n');
+    lastPaddleHitTime = now;
+  }
 };
 
 export const playWallHit = () => {
   if (!synths) return;
-  synths.wall.triggerAttackRelease('G3', '8n');
+  const now = performance.now();
+  if (now - lastWallHitTime > HIT_COOLDOWN) {
+    synths.wall.triggerAttackRelease('G3', '8n');
+    lastWallHitTime = now;
+  }
 };
 
 export const playScoreSound = () => {
@@ -53,6 +88,7 @@ export const playScoreSound = () => {
 };
 
 export const playGameOverSound = () => {
-  if (!synths) return;
+  if (!synths || isGameOverSoundPlayed) return;
+  isGameOverSoundPlayed = true;
   synths.gameOver.triggerAttackRelease(['G4', 'C4'], '4n');
 };
