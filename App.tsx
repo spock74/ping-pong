@@ -131,6 +131,7 @@ const App: React.FC = () => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const landmarkCanvasRef = useRef<HTMLCanvasElement>(null);
   const handsRef = useRef<any>(null);
+  const targetPlayerYRef = useRef<number>(GAME_HEIGHT / 2); // For paddle smoothing
 
   // Load score from localStorage on initial render
   useEffect(() => {
@@ -255,8 +256,8 @@ const App: React.FC = () => {
           const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
           const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
 
-          // Set position directly for immediate response, no smoothing
-          setPlayerY(clampedY);
+          // Update target position for smoothing instead of setting state directly
+          targetPlayerYRef.current = clampedY;
         }
       }
     }
@@ -334,6 +335,38 @@ const App: React.FC = () => {
     }
   }, [onResults]);
   
+  // Paddle Smoothing Effect
+  useEffect(() => {
+    let animationFrameId: number;
+
+    const smoothPaddleMovement = () => {
+      setPlayerY(prevY => {
+        const targetY = targetPlayerYRef.current;
+        // If the difference is negligible, snap to target and stop updates to prevent re-renders
+        if (Math.abs(targetY - prevY) < 0.5) {
+          return targetY;
+        }
+        // Lerp function for smoothing. A value around 0.2 provides a good balance.
+        const smoothingFactor = 0.2; 
+        return prevY + (targetY - prevY) * smoothingFactor;
+      });
+      animationFrameId = requestAnimationFrame(smoothPaddleMovement);
+    };
+
+    // Run smoothing loop when paddle control is expected (game is active, paused, or during calibration)
+    if (gameStatus === 'running' || gameStatus === 'paused' || gameStatus === 'calibrating') {
+        animationFrameId = requestAnimationFrame(smoothPaddleMovement);
+    } else {
+      // When game is idle or over, snap paddle to center.
+      targetPlayerYRef.current = GAME_HEIGHT / 2;
+      setPlayerY(GAME_HEIGHT / 2);
+    }
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [gameStatus]);
+
   const restartGame = () => {
     setGameStatus('idle');
   };
