@@ -1,0 +1,7 @@
+{
+  "name": "Gesture Pong Arcade",
+  "description": "A retro-arcade style Ping Pong game where you control your paddle using hand gestures detected from your webcam via Google's MediaPipe.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
