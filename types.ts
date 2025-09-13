@@ -1,2 +1,5 @@
+export type GameStatus = 'idle' | 'running' | 'over' | 'calibrating' | 'paused';
 
-export type GameStatus = 'idle' | 'running' | 'over';
+export type Difficulty = 'easy' | 'medium' | 'hard';
+
+export type GestureType = 'fist' | 'pointer';

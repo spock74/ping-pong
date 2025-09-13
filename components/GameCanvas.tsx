@@ -5,31 +5,42 @@ import {
   BALL_RADIUS,
   PADDLE_WIDTH,
   PADDLE_HEIGHT,
-  PADDLE_SPEED_AI,
   WINNING_SCORE,
-  INITIAL_BALL_SPEED_X,
+  DIFFICULTY_SETTINGS,
 } from '../constants';
-import type { GameStatus } from '../types';
+import type { GameStatus, Difficulty } from '../types';
+import {
+  playPaddleHit,
+  playWallHit,
+  playScoreSound,
+  playGameOverSound,
+} from '../utils/sounds';
+
 
 interface GameCanvasProps {
   status: GameStatus;
   playerY: number;
   setGameStatus: (status: GameStatus) => void;
   onGameOver: (winner: 'player' | 'computer') => void;
+  difficulty: Difficulty;
 }
 
-const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver }) => {
+const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const gameOverInitiated = useRef(false);
+
+  const { paddleSpeedAI, initialBallSpeedX } = DIFFICULTY_SETTINGS[difficulty];
+
   const [ball, setBall] = useState({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
-  const [ballSpeed, setBallSpeed] = useState({ vx: INITIAL_BALL_SPEED_X, vy: 2 });
+  const [ballSpeed, setBallSpeed] = useState({ vx: initialBallSpeedX, vy: 2 });
   const [computerY, setComputerY] = useState(GAME_HEIGHT / 2 - PADDLE_HEIGHT / 2);
   const [score, setScore] = useState({ player: 0, computer: 0 });
 
   const resetBall = useCallback((direction: number) => {
     setBall({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
     const randomVy = Math.random() * 4 - 2; // -2 to 2
-    setBallSpeed({ vx: INITIAL_BALL_SPEED_X * direction, vy: randomVy });
-  }, []);
+    setBallSpeed({ vx: initialBallSpeedX * direction, vy: randomVy });
+  }, [initialBallSpeedX]);
 
   const draw = useCallback((ctx: CanvasRenderingContext2D) => {
     // Clear canvas with a retro trail effect
@@ -52,8 +63,8 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     ctx.shadowColor = '#00ff00';
     ctx.fillRect(PADDLE_WIDTH * 2, playerY - PADDLE_HEIGHT / 2, PADDLE_WIDTH, PADDLE_HEIGHT);
     
-    ctx.fillStyle = '#33cc33'; // Computer paddle (dimmer green)
-    ctx.shadowColor = '#33cc33';
+    ctx.fillStyle = '#ff0000'; // Computer paddle (red)
+    ctx.shadowColor = '#ff0000';
     ctx.fillRect(GAME_WIDTH - PADDLE_WIDTH * 3, computerY - PADDLE_HEIGHT / 2, PADDLE_WIDTH, PADDLE_HEIGHT);
     
     // Draw ball
@@ -68,7 +79,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     ctx.font = '60px "Courier New", Courier, monospace';
     ctx.fillStyle = '#00ff00';
     ctx.fillText(score.player.toString(), GAME_WIDTH / 4, 70);
-    ctx.fillStyle = '#33cc33';
+    ctx.fillStyle = '#ff0000';
     ctx.fillText(score.computer.toString(), (GAME_WIDTH * 3) / 4, 70);
 
   }, [playerY, ball, computerY, score]);
@@ -79,63 +90,90 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     let animationFrameId: number;
 
     const gameLoop = () => {
-      // Update logic
-      setBall(prevBall => ({ x: prevBall.x + ballSpeed.vx, y: prevBall.y + ballSpeed.vy }));
-      
-      // AI movement
+      // 1. Calculate next state based on current state
+      let nextBall = { x: ball.x + ballSpeed.vx, y: ball.y + ballSpeed.vy };
+      let nextBallSpeed = { ...ballSpeed };
+
+      // AI movement (based on current ball position)
       setComputerY(prevY => {
-        const paddleCenter = prevY;
-        const diff = ball.y - paddleCenter;
-        if (Math.abs(diff) > 10) {
-            return prevY + Math.sign(diff) * PADDLE_SPEED_AI;
+        const diff = ball.y - prevY;
+        let newY = prevY;
+        if (Math.abs(diff) > 10) { // Dead zone to prevent jitter
+            newY = prevY + Math.sign(diff) * paddleSpeedAI;
         }
-        return prevY;
+        const minPaddleY = PADDLE_HEIGHT / 2;
+        const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
+        return Math.max(minPaddleY, Math.min(newY, maxPaddleY));
       });
 
-      // Collision detection
-      // Top/Bottom walls
-      if (ball.y + ballSpeed.vy > GAME_HEIGHT - BALL_RADIUS || ball.y + ballSpeed.vy < BALL_RADIUS) {
-        setBallSpeed(prev => ({ ...prev, vy: -prev.vy }));
+      // 2. Collision detection & response for walls (perfectly elastic)
+      if (nextBall.y > GAME_HEIGHT - BALL_RADIUS) {
+        nextBall.y = GAME_HEIGHT - BALL_RADIUS; // Clamp position to the boundary
+        nextBallSpeed.vy = -nextBallSpeed.vy;
+        playWallHit();
+      } else if (nextBall.y < BALL_RADIUS) {
+        nextBall.y = BALL_RADIUS; // Clamp position to the boundary
+        nextBallSpeed.vy = -nextBallSpeed.vy;
+        playWallHit();
       }
       
-      // Paddles
+      // 3. Collision detection & response for paddles
       const playerPaddleTop = playerY - PADDLE_HEIGHT / 2;
       const playerPaddleBottom = playerY + PADDLE_HEIGHT / 2;
       const computerPaddleTop = computerY - PADDLE_HEIGHT / 2;
       const computerPaddleBottom = computerY + PADDLE_HEIGHT / 2;
 
-      // Player paddle collision
+      // Player paddle: Check if the ball is moving left and crosses the paddle's plane
       if (
-        ball.x - BALL_RADIUS < PADDLE_WIDTH * 3 &&
-        ball.y > playerPaddleTop &&
-        ball.y < playerPaddleBottom &&
-        ballSpeed.vx < 0
+        nextBallSpeed.vx < 0 &&
+        nextBall.x - BALL_RADIUS <= PADDLE_WIDTH * 3 &&
+        ball.x - BALL_RADIUS > PADDLE_WIDTH * 3
       ) {
-        const intersectY = (playerY - ball.y) / (PADDLE_HEIGHT / 2);
-        const newVy = -intersectY * 5;
-        setBallSpeed(prev => ({ vx: -prev.vx * 1.05, vy: newVy }));
+        if (nextBall.y > playerPaddleTop && nextBall.y < playerPaddleBottom) {
+          nextBall.x = PADDLE_WIDTH * 3 + BALL_RADIUS; // Snap to outside paddle
+          const intersectY = (playerY - nextBall.y) / (PADDLE_HEIGHT / 2);
+          const newVy = -intersectY * 5;
+          nextBallSpeed.vx = -nextBallSpeed.vx * 1.05;
+          nextBallSpeed.vy = newVy;
+          playPaddleHit();
+        }
       }
 
-      // Computer paddle collision
+      // Computer paddle: Check if the ball is moving right and crosses the paddle's plane
       if (
-        ball.x + BALL_RADIUS > GAME_WIDTH - PADDLE_WIDTH * 3 &&
-        ball.y > computerPaddleTop &&
-        ball.y < computerPaddleBottom &&
-        ballSpeed.vx > 0
+        nextBallSpeed.vx > 0 &&
+        nextBall.x + BALL_RADIUS >= GAME_WIDTH - PADDLE_WIDTH * 3 &&
+        ball.x + BALL_RADIUS < GAME_WIDTH - PADDLE_WIDTH * 3
       ) {
-         setBallSpeed(prev => ({ vx: -prev.vx, vy: prev.vy }));
+        if (nextBall.y > computerPaddleTop && nextBall.y < computerPaddleBottom) {
+           nextBall.x = GAME_WIDTH - PADDLE_WIDTH * 3 - BALL_RADIUS; // Snap to outside
+           nextBallSpeed.vx = -nextBallSpeed.vx;
+           playPaddleHit();
+        }
       }
 
-      // Scoring
-      if (ball.x < 0) {
-        setScore(prev => ({ ...prev, computer: prev.computer + 1 }));
+      // 4. Scoring
+      if (nextBall.x < 0) {
+        const newComputerScore = score.computer + 1;
+        setScore(prev => ({ ...prev, computer: newComputerScore }));
         resetBall(1);
-      } else if (ball.x > GAME_WIDTH) {
-        setScore(prev => ({ ...prev, player: prev.player + 1 }));
+        if (newComputerScore < WINNING_SCORE) {
+          playScoreSound();
+        }
+      } else if (nextBall.x > GAME_WIDTH) {
+        const newPlayerScore = score.player + 1;
+        setScore(prev => ({ ...prev, player: newPlayerScore }));
         resetBall(-1);
+        if (newPlayerScore < WINNING_SCORE) {
+          playScoreSound();
+        }
+      } else {
+        // 5. If no score, update ball state
+        setBall(nextBall);
+        setBallSpeed(nextBallSpeed);
       }
 
-      // Draw
+      // 6. Draw the new state
       const canvas = canvasRef.current;
       if (canvas) {
         const context = canvas.getContext('2d');
@@ -144,6 +182,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
         }
       }
       
+      // 7. Request the next frame
       animationFrameId = requestAnimationFrame(gameLoop);
     };
 
@@ -152,11 +191,12 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [status, ball, ballSpeed, playerY, computerY, score, draw, resetBall]);
+  }, [status, ball, ballSpeed, playerY, computerY, score, draw, resetBall, paddleSpeedAI]);
 
   // Reset game state when status changes
   useEffect(() => {
     if (status === 'running') {
+      gameOverInitiated.current = false;
       setScore({ player: 0, computer: 0 });
       resetBall(Math.random() > 0.5 ? 1 : -1);
     }
@@ -164,12 +204,20 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
 
   // Check for winner
   useEffect(() => {
+    if (gameOverInitiated.current) {
+        return;
+    }
+
     if (score.player >= WINNING_SCORE) {
+      gameOverInitiated.current = true;
       setGameStatus('over');
       onGameOver('player');
+      playGameOverSound();
     } else if (score.computer >= WINNING_SCORE) {
+      gameOverInitiated.current = true;
       setGameStatus('over');
       onGameOver('computer');
+      playGameOverSound();
     }
   }, [score, setGameStatus, onGameOver]);
 
