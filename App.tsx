@@ -131,9 +131,8 @@ const detectGesture = (landmarks: any[]): HandGesture => {
         return 'pointer';
     }
 
-    // 4. Fist
-    // This will now be correctly identified, as the stricter thumb checks above will fail for a standard fist.
-    if (areFingersCurled) {
+    // 4. Fist - Refined to prevent conflict with thumbs_up
+    if (areFingersCurled && !isThumbClearlyUp) {
         return 'fist';
     }
 
@@ -177,6 +176,7 @@ const App: React.FC = () => {
   const [praises, setPraises] = useState<string[]>(FALLBACK_PRAISES);
   const [apiError, setApiError] = useState<string | null>(null);
   const [isFetchingBanter, setIsFetchingBanter] = useState(false);
+  const [currentGesture, setCurrentGesture] = useState<HandGesture>('unknown');
   const aiMessageTimeoutRef = useRef<number | null>(null);
   
   // Calibration State
@@ -321,10 +321,11 @@ const App: React.FC = () => {
     // Handle game logic that requires a visible hand
     if (handIsCurrentlyVisible) {
       const handLandmarks = results.multiHandLandmarks[0];
-      const currentGesture = detectGesture(handLandmarks);
+      const gesture = detectGesture(handLandmarks);
+      setCurrentGesture(gesture);
       
       // During calibration, only track hand position if the gesture is a fist
-      if (gameStatusRef.current === 'calibrating' && currentGesture === 'fist') {
+      if (gameStatusRef.current === 'calibrating' && gesture === 'fist') {
           lastValidCalibPositionRef.current = handLandmarks[0].y;
       }
       
@@ -332,7 +333,7 @@ const App: React.FC = () => {
 
       // --- Handle Game State Gestures (Pause/Reset/Start) with cooldown ---
       if (!gestureActionLockRef.current) {
-          if (currentGesture === 'spread') {
+          if (gesture === 'spread') {
               if (gameStatusRef.current === 'running') {
                   setGameStatus('paused');
                   gestureActionLockRef.current = true;
@@ -342,11 +343,11 @@ const App: React.FC = () => {
                   gestureActionLockRef.current = true;
                   setTimeout(() => { gestureActionLockRef.current = false; }, 1000);
               }
-          } else if (currentGesture === 'thumbs_down') {
+          } else if (gesture === 'thumbs_down') {
               handleFullReset();
               gestureActionLockRef.current = true;
               setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown after reset
-          } else if (currentGesture === 'thumbs_up' && gameStatusRef.current === 'idle') {
+          } else if (gesture === 'thumbs_up' && gameStatusRef.current === 'idle') {
               startGame();
               gestureActionLockRef.current = true;
               setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown
@@ -354,7 +355,7 @@ const App: React.FC = () => {
       }
       
       // --- Handle Paddle Movement Gesture ---
-      if (currentGesture === gestureTypeRef.current) {
+      if (gesture === gestureTypeRef.current) {
         const wrist = handLandmarks[0];
         if (wrist) {
           const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
@@ -379,6 +380,8 @@ const App: React.FC = () => {
           targetPlayerYRef.current = clampedY;
         }
       }
+    } else {
+      setCurrentGesture('unknown');
     }
 
     // --- New Calibration State Machine ---
@@ -649,27 +652,32 @@ const App: React.FC = () => {
       <p className="mt-4 text-sm text-gray-400">Desenvolvido com React, MediaPipe, Tailwind CSS e ❤️ por Zehn & Gemini 2.5-flash</p>
       
       {/* Webcam and Landmark visualization container */}
-      <div className="absolute top-4 right-4 flex items-center space-x-2">
-        <button
-            onClick={() => setShowLandmarks(prev => !prev)}
-            className="self-center px-2 py-1 text-xs font-semibold text-white bg-lime-600 rounded shadow-md hover:bg-lime-500 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black focus:ring-lime-400"
-            aria-label={showLandmarks ? "Mostrar câmera" : "Mostrar detecção"}
-            title={showLandmarks ? 'Mostrar câmera' : 'Mostrar detecção'}
-        >
-            {showLandmarks ? "Ver Cam" : "Ver Detecção"}
-        </button>
-        <div className="w-24 h-auto border-2 border-lime-500 rounded-md overflow-hidden opacity-50 hover:opacity-100 transition-opacity">
-            <video 
-                ref={videoRef} 
-                className="block w-full"
-                style={{ transform: 'scaleX(-1)', display: showLandmarks ? 'none' : 'block' }} 
-                playsInline 
-            />
-            <canvas 
-                ref={landmarkCanvasRef} 
-                className="block w-full bg-black" 
-                style={{ transform: 'scaleX(-1)', display: showLandmarks ? 'block' : 'none' }}
-            />
+      <div className="absolute top-4 right-4 flex flex-col items-end space-y-2">
+         <div className="bg-black/50 text-lime-400 text-sm font-semibold px-3 py-1.5 rounded-md border border-lime-800 shadow-lg text-center">
+            Gesto: <span className="text-white font-bold tracking-wider w-20 inline-block">{currentGesture === 'unknown' ? 'N/D' : currentGesture.toUpperCase()}</span>
+         </div>
+        <div className="flex items-center space-x-2">
+            <button
+                onClick={() => setShowLandmarks(prev => !prev)}
+                className="self-center px-2 py-1 text-xs font-semibold text-white bg-lime-600 rounded shadow-md hover:bg-lime-500 transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-black focus:ring-lime-400"
+                aria-label={showLandmarks ? "Mostrar câmera" : "Mostrar detecção"}
+                title={showLandmarks ? 'Mostrar câmera' : 'Mostrar detecção'}
+            >
+                {showLandmarks ? "Ver Cam" : "Ver Detecção"}
+            </button>
+            <div className="w-24 h-auto border-2 border-lime-500 rounded-md overflow-hidden opacity-50 hover:opacity-100 transition-opacity">
+                <video 
+                    ref={videoRef} 
+                    className="block w-full"
+                    style={{ transform: 'scaleX(-1)', display: showLandmarks ? 'none' : 'block' }} 
+                    playsInline 
+                />
+                <canvas 
+                    ref={landmarkCanvasRef} 
+                    className="block w-full bg-black" 
+                    style={{ transform: 'scaleX(-1)', display: showLandmarks ? 'block' : 'none' }}
+                />
+            </div>
         </div>
       </div>
     </div>
