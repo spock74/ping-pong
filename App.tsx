@@ -226,7 +226,6 @@ const App: React.FC = () => {
   }, []);
   
   const startGame = useCallback(() => {
-    startAudioContext(); // Ensure audio context is ready on gesture start
     setGameStatus('running');
   }, []);
 

@@ -32,8 +32,13 @@ const DifficultyButton: React.FC<{
   const activeClasses = 'bg-lime-500 text-white shadow-[0_0_10px_#0f0] scale-105';
   const inactiveClasses = 'bg-gray-700 text-gray-400 hover:bg-gray-600 hover:text-white';
 
+  const handleClick = () => {
+    startAudioContext();
+    onClick(level);
+  };
+
   return (
-    <button onClick={() => onClick(level)} className={`${baseClasses} ${isActive ? activeClasses : inactiveClasses}`}>
+    <button onClick={handleClick} className={`${baseClasses} ${isActive ? activeClasses : inactiveClasses}`}>
       {children}
     </button>
   );
@@ -43,6 +48,11 @@ const CalibrationScreen: React.FC<{
   onStartCalibrationSequence: () => void;
   step: 'start' | 'up' | 'down' | 'finished';
 }> = ({ onStartCalibrationSequence, step }) => {
+  const handleStart = () => {
+    startAudioContext();
+    onStartCalibrationSequence();
+  };
+
   if (step === 'start') {
     return (
       <div className="flex flex-col items-center justify-center text-center">
@@ -52,7 +62,7 @@ const CalibrationScreen: React.FC<{
         <p className="text-lg mb-8 max-w-md">
           Vamos mapear sua área de movimento em um único gesto para um controle perfeito.
         </p>
-        <button onClick={onStartCalibrationSequence} className="px-8 py-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]">
+        <button onClick={handleStart} className="px-8 py-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]">
           Iniciar
         </button>
       </div>
@@ -84,6 +94,21 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
   const handleStartGame = () => {
     startAudioContext();
     onStart();
+  };
+  
+  const handleRestart = () => {
+    startAudioContext();
+    onRestart();
+  };
+  
+  const handleCalibrate = () => {
+    startAudioContext();
+    onCalibrate();
+  };
+
+  const handleGestureChange = (type: GestureType) => {
+    startAudioContext();
+    onGestureTypeChange(type);
   };
 
   if (status === 'calibrating') {
@@ -138,13 +163,13 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
               <h3 className="text-xl text-gray-400 uppercase tracking-wider mb-3">Gesto de Controle</h3>
               <div className="flex justify-center space-x-2 bg-gray-800 p-1 rounded-lg">
                   <button 
-                      onClick={() => onGestureTypeChange('fist')}
+                      onClick={() => handleGestureChange('fist')}
                       className={`px-4 py-2 text-sm font-bold rounded-md transition-colors duration-200 w-32 ${gestureType === 'fist' ? 'bg-lime-500 text-white shadow-sm shadow-lime-300' : 'bg-transparent text-gray-400 hover:bg-gray-700'}`}
                   >
                       Mão Fechada
                   </button>
                   <button 
-                      onClick={() => onGestureTypeChange('pointer')}
+                      onClick={() => handleGestureChange('pointer')}
                       className={`px-4 py-2 text-sm font-bold rounded-md transition-colors duration-200 w-32 ${gestureType === 'pointer' ? 'bg-lime-500 text-white shadow-sm shadow-lime-300' : 'bg-transparent text-gray-400 hover:bg-gray-700'}`}
                   >
                       Apontar
@@ -157,7 +182,7 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
 
       {isOver && (
          <button
-            onClick={onRestart}
+            onClick={handleRestart}
             className="px-8 py-4 mb-6 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]"
         >
             Jogar Novamente
@@ -176,7 +201,7 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
             Iniciar Jogo
             </button>
             <button
-            onClick={onCalibrate}
+            onClick={handleCalibrate}
             disabled={!webcamReady}
             className="w-64 px-6 py-2 text-lg font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
                 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white border-2 border-gray-600"
