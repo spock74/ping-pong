@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import GameCanvas from './components/GameCanvas';
 import InstructionOverlay from './components/InstructionOverlay';
 import { GAME_HEIGHT, PADDLE_HEIGHT } from './constants';
 import type { GameStatus, Difficulty, GestureType } from './types';
-import { startAudioContext } from './utils/sounds';
 
 // Declare MediaPipe and its utilities as global variables
 declare const window: any;
@@ -18,37 +17,63 @@ const getAI = () => {
   return ai;
 };
 
-const generateTaunt = async (): Promise<string> => {
+// Hardcoded fallbacks in case the API fails or is rate-limited
+const FALLBACK_TAUNTS = ["HAHAHA!", "TOO SLOW!", "IS THAT ALL?", "TRY HARDER!", "ROBOTS RULE!"];
+const FALLBACK_PRAISES = ["LUCKY SHOT...", "HMPH.", "BEGINNER'S LUCK.", "DON'T GET USED TO IT.", "NOT BAD... FOR A HUMAN."];
+
+const generateTauntList = async (): Promise<string[]> => {
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: 'Generate a short, witty, retro-arcade style taunt for a human player who just lost a point in Pong. Max 10 words.',
+      contents: 'Generate a list of 10 short, witty, retro-arcade style taunts for a human player who just lost a point in Pong. Each taunt should be max 10 words.',
       config: {
-        thinkingConfig: { thinkingBudget: 0 }
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            taunts: {
+              type: Type.ARRAY,
+              description: 'A list of 10 short, witty, retro-arcade style taunts.',
+              items: { type: Type.STRING }
+            }
+          }
+        }
       }
     });
-    return response.text.trim().replace(/"/g, ''); // Remove quotes from response
+    const json = JSON.parse(response.text);
+    return Array.isArray(json.taunts) && json.taunts.length > 0 ? json.taunts : FALLBACK_TAUNTS;
   } catch (error) {
-    console.error("Error generating taunt:", error);
-    return "ERROR_404: WIT_NOT_FOUND";
+    console.error("Error generating taunt list:", error);
+    return FALLBACK_TAUNTS;
   }
 };
 
-const generatePraise = async (): Promise<string> => {
+const generatePraiseList = async (): Promise<string[]> => {
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: 'Generate a short, retro-arcade style message of grudging praise for a human who just scored a point in Pong against an AI. Max 10 words.',
-      config: {
-        thinkingConfig: { thinkingBudget: 0 }
+      contents: 'Generate a list of 10 short, retro-arcade style messages of grudging praise for a human who just scored a point in Pong against an AI. Max 10 words.',
+       config: {
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            praises: {
+              type: Type.ARRAY,
+              description: 'A list of 10 short, retro-arcade style messages of grudging praise.',
+              items: { type: Type.STRING }
+            }
+          }
+        }
       }
     });
-    return response.text.trim().replace(/"/g, ''); // Remove quotes from response
+    const json = JSON.parse(response.text);
+    return Array.isArray(json.praises) && json.praises.length > 0 ? json.praises : FALLBACK_PRAISES;
   } catch (error) {
-    console.error("Error generating praise:", error);
-    return "LUCKY_SHOT...";
+    console.error("Error generating praise list:", error);
+    return FALLBACK_PRAISES;
   }
 };
 // --- End Gemini API Logic ---
@@ -162,6 +187,8 @@ const App: React.FC = () => {
   const [persistentScore, setPersistentScore] = useState({ player: 0, computer: 0 });
   const [showLandmarks, setShowLandmarks] = useState<boolean>(true); // Default to landmark view
   const [aiMessage, setAiMessage] = useState<string | null>(null);
+  const [taunts, setTaunts] = useState<string[]>(FALLBACK_TAUNTS);
+  const [praises, setPraises] = useState<string[]>(FALLBACK_PRAISES);
   const aiMessageTimeoutRef = useRef<number | null>(null);
   
   // Calibration State
@@ -206,6 +233,12 @@ const App: React.FC = () => {
     } catch (error) {
       console.error("Failed to load or parse score from localStorage:", error);
     }
+    
+    // Pre-fetch AI messages. State is already initialized with fallbacks,
+    // so we don't need to wait for this to complete.
+    generateTauntList().then(setTaunts);
+    generatePraiseList().then(setPraises);
+
   }, []);
 
   // Save score to localStorage whenever it changes
@@ -441,19 +474,21 @@ const App: React.FC = () => {
     }));
   }, []);
 
-  const handlePointScored = useCallback(async (scorer: 'player' | 'computer') => {
+  const handlePointScored = useCallback((scorer: 'player' | 'computer') => {
     if (aiMessageTimeoutRef.current) {
         clearTimeout(aiMessageTimeoutRef.current);
     }
     setAiMessage(null); // Clear previous message immediately
     
     // Tiny delay to allow React to clear state before setting a new one, ensuring animations restart.
-    setTimeout(async () => {
+    setTimeout(() => {
         let message = '';
         if (scorer === 'computer') {
-            message = await generateTaunt();
+            const randomIndex = Math.floor(Math.random() * taunts.length);
+            message = taunts[randomIndex];
         } else {
-            message = await generatePraise();
+            const randomIndex = Math.floor(Math.random() * praises.length);
+            message = praises[randomIndex];
         }
         setAiMessage(message);
 
@@ -462,7 +497,7 @@ const App: React.FC = () => {
             aiMessageTimeoutRef.current = null;
         }, 4000);
     }, 50);
-  }, []);
+  }, [praises, taunts]);
 
   // Clean up timeout on unmount
   useEffect(() => {
@@ -570,7 +605,7 @@ const App: React.FC = () => {
         )}
       </div>
 
-      <p className="mt-4 text-sm text-gray-400">Desenvolvido com React, MediaPipe, Tailwind CSS e ❤️ por Zehn & Gemini 2.5-pro</p>
+      <p className="mt-4 text-sm text-gray-400">Desenvolvido com React, MediaPipe, Tailwind CSS e ❤️ por Zehn & Gemini 2.5-flash</p>
       
       {/* Webcam and Landmark visualization container */}
       <div className="absolute top-4 right-4 flex items-center space-x-2">
