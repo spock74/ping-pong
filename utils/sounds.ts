@@ -10,11 +10,20 @@ let synths: {
 
 let isAudioInitialized = false;
 let isGameOverSoundPlayed = false;
+let isGloballySoundEnabled = true; // Master sound control
 
 // Throttling for hit sounds to prevent Tone.js errors on rapid calls
 let lastPaddleHitTime = 0;
 let lastWallHitTime = 0;
 const HIT_COOLDOWN = 50; // 50ms cooldown for hit sounds
+
+/**
+ * Sets the global sound state for the application.
+ * @param enabled - Whether sound should be enabled or not.
+ */
+export const setSoundEnabled = (enabled: boolean) => {
+  isGloballySoundEnabled = enabled;
+};
 
 // Function to initialize the synths after Tone.start()
 const initializeSynths = () => {
@@ -46,7 +55,7 @@ const initializeSynths = () => {
  * This must be called from a user interaction (e.g., button click) to initialize the audio context.
  */
 export const startAudioContext = async () => {
-  if (isAudioInitialized || typeof Tone === 'undefined') return;
+  if (isAudioInitialized || typeof Tone === 'undefined' || !isGloballySoundEnabled) return;
   try {
     await Tone.start();
     initializeSynths();
@@ -65,7 +74,7 @@ export const resetGameOverSoundLock = () => {
 };
 
 export const playPaddleHit = () => {
-  if (!synths) return;
+  if (!synths || !isGloballySoundEnabled) return;
   const now = performance.now();
   if (now - lastPaddleHitTime > HIT_COOLDOWN) {
     synths.paddle.triggerAttackRelease('C4', '8n');
@@ -74,7 +83,7 @@ export const playPaddleHit = () => {
 };
 
 export const playWallHit = () => {
-  if (!synths) return;
+  if (!synths || !isGloballySoundEnabled) return;
   const now = performance.now();
   if (now - lastWallHitTime > HIT_COOLDOWN) {
     synths.wall.triggerAttackRelease('G3', '8n');
@@ -83,12 +92,12 @@ export const playWallHit = () => {
 };
 
 export const playScoreSound = () => {
-  if (!synths) return;
+  if (!synths || !isGloballySoundEnabled) return;
   synths.score.triggerAttackRelease(['C5', 'G5'], '16n');
 };
 
 export const playGameOverSound = () => {
-  if (!synths || isGameOverSoundPlayed) return;
+  if (!synths || isGameOverSoundPlayed || !isGloballySoundEnabled) return;
   isGameOverSoundPlayed = true;
   synths.gameOver.triggerAttackRelease(['G4', 'C4'], '4n');
 };

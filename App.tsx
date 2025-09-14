@@ -4,6 +4,7 @@ import GameCanvas from './components/GameCanvas';
 import InstructionOverlay from './components/InstructionOverlay';
 import { GAME_HEIGHT, PADDLE_HEIGHT, PADDLE_SMOOTHING_FACTOR } from './constants';
 import type { GameStatus, Difficulty, GestureType } from './types';
+import { setSoundEnabled } from './utils/sounds';
 
 // Declare MediaPipe and its utilities as global variables
 declare const window: any;
@@ -177,6 +178,14 @@ const App: React.FC = () => {
   const [apiError, setApiError] = useState<string | null>(null);
   const [isFetchingBanter, setIsFetchingBanter] = useState(false);
   const [currentGesture, setCurrentGesture] = useState<HandGesture>('unknown');
+  const [isSoundEnabled, setIsSoundEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('pongSoundEnabled');
+      return saved !== null ? JSON.parse(saved) : true;
+    } catch {
+      return true;
+    }
+  });
   const aiMessageTimeoutRef = useRef<number | null>(null);
   
   // Calibration State
@@ -276,6 +285,16 @@ const App: React.FC = () => {
       console.error("Failed to save score to localStorage:", error);
     }
   }, [persistentScore]);
+
+  // Save sound setting and update sound module whenever it changes
+  useEffect(() => {
+    try {
+      localStorage.setItem('pongSoundEnabled', JSON.stringify(isSoundEnabled));
+    } catch (error) {
+      console.error("Failed to save sound setting to localStorage:", error);
+    }
+    setSoundEnabled(isSoundEnabled);
+  }, [isSoundEnabled]);
 
   const handleFullReset = useCallback(() => {
     console.log("Performing full reset.");
@@ -627,6 +646,8 @@ const App: React.FC = () => {
             showCalibrationSuccess={showCalibrationSuccess}
             onFetchBanter={handleFetchBanter}
             isFetchingBanter={isFetchingBanter}
+            isSoundEnabled={isSoundEnabled}
+            onSoundToggle={setIsSoundEnabled}
           />
         )}
         <GameCanvas 

@@ -17,6 +17,8 @@ interface InstructionOverlayProps {
   showCalibrationSuccess: boolean;
   onFetchBanter: () => void;
   isFetchingBanter: boolean;
+  isSoundEnabled: boolean;
+  onSoundToggle: (enabled: boolean) => void;
 }
 
 const LoadingSpinner: React.FC = () => (
@@ -88,7 +90,7 @@ const CalibrationScreen: React.FC<{
 };
 
 
-const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamReady, onStart, onRestart, difficulty, onDifficultyChange, gestureType, onGestureTypeChange, onCalibrate, onStartCalibrationSequence, calibrationStep, showCalibrationSuccess, onFetchBanter, isFetchingBanter }) => {
+const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamReady, onStart, onRestart, difficulty, onDifficultyChange, gestureType, onGestureTypeChange, onCalibrate, onStartCalibrationSequence, calibrationStep, showCalibrationSuccess, onFetchBanter, isFetchingBanter, isSoundEnabled, onSoundToggle }) => {
   const isIdle = status === 'idle';
   const isOver = status === 'over';
   const isPaused = status === 'paused';
@@ -116,6 +118,14 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
   const handleFetchBanter = () => {
     startAudioContext();
     onFetchBanter();
+  };
+
+  const handleSoundToggle = () => {
+    // Attempt to start audio context if user is enabling sound for the first time
+    if (!isSoundEnabled) {
+      startAudioContext();
+    }
+    onSoundToggle(!isSoundEnabled);
   };
 
   if (status === 'calibrating') {
@@ -222,6 +232,23 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
                 bg-blue-800 hover:bg-blue-700 text-gray-300 hover:text-white border-2 border-blue-700"
             >
             {isFetchingBanter ? 'Buscando...' : 'Novas Mensagens da IA'}
+            </button>
+            <button
+              onClick={handleSoundToggle}
+              disabled={!webcamReady}
+              className="w-72 px-6 py-2 text-lg font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
+                  bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white border-2 border-gray-600 flex items-center justify-center space-x-3"
+            >
+              {isSoundEnabled ? (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 9.75L19.5 12m0 0l2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                </svg>
+              )}
+              <span>Som: {isSoundEnabled ? 'Ligado' : 'Desligado'}</span>
             </button>
             {!webcamReady && (
                 <div className="flex items-center justify-center pt-4">
