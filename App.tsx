@@ -180,6 +180,19 @@ const App: React.FC = () => {
   const handsRef = useRef<any>(null);
   const targetPlayerYRef = useRef<number>(GAME_HEIGHT / 2); // For paddle smoothing
 
+  // --- Refs to mirror state for stable onResults callback ---
+  const gameStatusRef = useRef(gameStatus);
+  useEffect(() => { gameStatusRef.current = gameStatus; }, [gameStatus]);
+
+  const gestureTypeRef = useRef(gestureType);
+  useEffect(() => { gestureTypeRef.current = gestureType; }, [gestureType]);
+
+  const calibrationRangeRef = useRef(calibrationRange);
+  useEffect(() => { calibrationRangeRef.current = calibrationRange; }, [calibrationRange]);
+  
+  const calibrationStepRef = useRef(calibrationStep);
+  useEffect(() => { calibrationStepRef.current = calibrationStep; }, [calibrationStep]);
+
   // Load score from localStorage on initial render
   useEffect(() => {
     try {
@@ -249,7 +262,7 @@ const App: React.FC = () => {
       const currentGesture = detectGesture(handLandmarks);
       
       // During calibration, only track hand position if the gesture is a fist
-      if (gameStatus === 'calibrating' && currentGesture === 'fist') {
+      if (gameStatusRef.current === 'calibrating' && currentGesture === 'fist') {
           lastValidCalibPositionRef.current = handLandmarks[0].y;
       }
       
@@ -258,11 +271,11 @@ const App: React.FC = () => {
       // --- Handle Game State Gestures (Pause/Reset/Start) with cooldown ---
       if (!gestureActionLockRef.current) {
           if (currentGesture === 'spread') {
-              if (gameStatus === 'running') {
+              if (gameStatusRef.current === 'running') {
                   setGameStatus('paused');
                   gestureActionLockRef.current = true;
                   setTimeout(() => { gestureActionLockRef.current = false; }, 1000); // 1s cooldown
-              } else if (gameStatus === 'paused') {
+              } else if (gameStatusRef.current === 'paused') {
                   setGameStatus('running');
                   gestureActionLockRef.current = true;
                   setTimeout(() => { gestureActionLockRef.current = false; }, 1000);
@@ -271,7 +284,7 @@ const App: React.FC = () => {
               handleFullReset();
               gestureActionLockRef.current = true;
               setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown after reset
-          } else if (currentGesture === 'thumbs_up' && gameStatus === 'idle') {
+          } else if (currentGesture === 'thumbs_up' && gameStatusRef.current === 'idle') {
               startGame();
               gestureActionLockRef.current = true;
               setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown
@@ -279,19 +292,16 @@ const App: React.FC = () => {
       }
       
       // --- Handle Paddle Movement Gesture ---
-      if (currentGesture === gestureType) {
+      if (currentGesture === gestureTypeRef.current) {
         const wrist = handLandmarks[0];
         if (wrist) {
           const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
-          const calibrationSpan = calibrationRange.max - calibrationRange.min;
+          const calibrationSpan = calibrationRangeRef.current.max - calibrationRangeRef.current.min;
           let newY: number;
 
           // Use calibrated range if it's valid (e.g., covers at least 10% of the screen)
           if (calibrationSpan > 0.1) {
-            const normalizedY = (wrist.y - calibrationRange.min) / calibrationSpan;
-            // By not clamping normalizedY here, we allow the user to move past the calibrated
-            // edges, and the final clamping below will hold the paddle at the screen edge.
-            // This makes the controls feel more responsive and forgiving.
+            const normalizedY = (wrist.y - calibrationRangeRef.current.min) / calibrationSpan;
             newY = (normalizedY * paddleTravelRange) + (PADDLE_HEIGHT / 2);
           } else {
             // Fallback to default full-range mapping
@@ -310,20 +320,20 @@ const App: React.FC = () => {
     }
 
     // --- New Calibration State Machine ---
-    if (gameStatus === 'calibrating') {
+    if (gameStatusRef.current === 'calibrating') {
       // Step 1: Hand was visible and is now not visible (moved off screen)
       if (handWasPreviouslyVisible && !handIsCurrentlyVisible) {
         const lastValidY = lastValidCalibPositionRef.current; // Use the gesture-gated position
         
         // Check for finishing the 'up' step
-        if (calibrationStep === 'up' && lastValidY !== null && lastValidY < 0.5) {
+        if (calibrationStepRef.current === 'up' && lastValidY !== null && lastValidY < 0.5) {
           calibrationDataRef.current.min = lastValidY;
           console.log(`Calibrated TOP boundary at: ${lastValidY}`);
           setCalibrationStep('down');
         }
         
         // Check for finishing the 'down' step
-        else if (calibrationStep === 'down' && lastValidY !== null && lastValidY > 0.5) {
+        else if (calibrationStepRef.current === 'down' && lastValidY !== null && lastValidY > 0.5) {
           calibrationDataRef.current.max = lastValidY;
           console.log(`Calibrated BOTTOM boundary at: ${lastValidY}`);
           setCalibrationStep('finished');
@@ -333,7 +343,7 @@ const App: React.FC = () => {
         lastValidCalibPositionRef.current = null;
       }
     }
-  }, [calibrationRange, gestureType, gameStatus, handleFullReset, startGame, calibrationStep]);
+  }, [handleFullReset, startGame]);
 
   useEffect(() => {
     if (typeof window.Hands === 'undefined') {
@@ -361,9 +371,9 @@ const App: React.FC = () => {
     if (videoRef.current) {
         const camera = new window.Camera(videoRef.current, {
             onFrame: async () => {
-                if (videoRef.current) {
+                if (videoRef.current && handsRef.current) {
                     try {
-                        await hands.send({ image: videoRef.current });
+                        await handsRef.current.send({ image: videoRef.current });
                     } catch (error) {
                         console.error("Error sending image to MediaPipe Hands:", error);
                     }
@@ -378,6 +388,13 @@ const App: React.FC = () => {
         } catch (error) {
             console.error("Failed to start camera. Please ensure permissions are granted and no other application is using the camera.", error);
             setWebcamReady(false);
+        }
+    }
+
+    return () => {
+        if(handsRef.current) {
+            handsRef.current.close();
+            handsRef.current = null;
         }
     }
   }, [onResults]);
