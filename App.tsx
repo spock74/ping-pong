@@ -18,15 +18,16 @@ const getAI = () => {
 };
 
 // Hardcoded fallbacks in case the API fails or is rate-limited
-const FALLBACK_TAUNTS = ["HAHAHA!", "TOO SLOW!", "IS THAT ALL?", "TRY HARDER!", "ROBOTS RULE!"];
-const FALLBACK_PRAISES = ["LUCKY SHOT...", "HMPH.", "BEGINNER'S LUCK.", "DON'T GET USED TO IT.", "NOT BAD... FOR A HUMAN."];
+const FALLBACK_TAUNTS = ["HAHAHA!", "LENTO DEMAIS!", "SÓ ISSO?", "TENTE MAIS!", "ROBÔS DOMINAM!"];
+const FALLBACK_PRAISES = ["SORTE DE PRINCIPIANTE...", "HMPH.", "NÃO SE ACOSTUME.", "NADA MAL... PARA UM HUMANO."];
 
-const generateTauntList = async (): Promise<string[]> => {
+const generateAIResponses = async (): Promise<{ taunts: string[], praises: string[], success: boolean, error?: string }> => {
+  const fallback = { taunts: FALLBACK_TAUNTS, praises: FALLBACK_PRAISES, success: false };
   try {
     const ai = getAI();
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: 'Generate a list of 10 short, witty, retro-arcade style taunts for a human player who just lost a point in Pong. Each taunt should be max 10 words.',
+      contents: 'Generate two lists of short, witty, retro-arcade style messages for a Pong game. First, a list of 10 taunts for a human player who just lost a point. Second, a list of 10 messages of grudging praise for a human who just scored a point against an AI. Each message should be max 10 words.',
       config: {
         responseMimeType: "application/json",
         responseSchema: {
@@ -36,30 +37,7 @@ const generateTauntList = async (): Promise<string[]> => {
               type: Type.ARRAY,
               description: 'A list of 10 short, witty, retro-arcade style taunts.',
               items: { type: Type.STRING }
-            }
-          }
-        }
-      }
-    });
-    const json = JSON.parse(response.text);
-    return Array.isArray(json.taunts) && json.taunts.length > 0 ? json.taunts : FALLBACK_TAUNTS;
-  } catch (error) {
-    console.error("Error generating taunt list:", error);
-    return FALLBACK_TAUNTS;
-  }
-};
-
-const generatePraiseList = async (): Promise<string[]> => {
-  try {
-    const ai = getAI();
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
-      contents: 'Generate a list of 10 short, retro-arcade style messages of grudging praise for a human who just scored a point in Pong against an AI. Max 10 words.',
-       config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
+            },
             praises: {
               type: Type.ARRAY,
               description: 'A list of 10 short, retro-arcade style messages of grudging praise.',
@@ -70,10 +48,18 @@ const generatePraiseList = async (): Promise<string[]> => {
       }
     });
     const json = JSON.parse(response.text);
-    return Array.isArray(json.praises) && json.praises.length > 0 ? json.praises : FALLBACK_PRAISES;
+    const taunts = Array.isArray(json.taunts) && json.taunts.length > 0 ? json.taunts : FALLBACK_TAUNTS;
+    const praises = Array.isArray(json.praises) && json.praises.length > 0 ? json.praises : FALLBACK_PRAISES;
+    return { taunts, praises, success: true };
   } catch (error) {
-    console.error("Error generating praise list:", error);
-    return FALLBACK_PRAISES;
+    console.error("Error generating AI responses:", error);
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred.";
+    
+    let userMessage = "Não foi possível buscar as mensagens da IA. Usando mensagens padrão.";
+    if (errorMessage.toLowerCase().includes("quota")) {
+        userMessage = "Cota da API de IA atingida por hoje. Usando mensagens padrão até amanhã.";
+    }
+    return { ...fallback, error: userMessage };
   }
 };
 // --- End Gemini API Logic ---
@@ -189,6 +175,8 @@ const App: React.FC = () => {
   const [aiMessage, setAiMessage] = useState<string | null>(null);
   const [taunts, setTaunts] = useState<string[]>(FALLBACK_TAUNTS);
   const [praises, setPraises] = useState<string[]>(FALLBACK_PRAISES);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [isFetchingBanter, setIsFetchingBanter] = useState(false);
   const aiMessageTimeoutRef = useRef<number | null>(null);
   
   // Calibration State
@@ -220,8 +208,33 @@ const App: React.FC = () => {
   const calibrationStepRef = useRef(calibrationStep);
   useEffect(() => { calibrationStepRef.current = calibrationStep; }, [calibrationStep]);
 
-  // Load score from localStorage on initial render
+  const handleFetchBanter = useCallback(async () => {
+      setIsFetchingBanter(true);
+      setApiError(null);
+      console.log("Fetching new AI responses...");
+      const { taunts, praises, success, error } = await generateAIResponses();
+      setTaunts(taunts);
+      setPraises(praises);
+      
+      if (error) {
+          setApiError(error);
+          setTimeout(() => setApiError(null), 10000); // Auto-hide after 10 seconds
+      }
+
+      if (success) {
+        try {
+          localStorage.setItem('pongAiResponses', JSON.stringify({ taunts, praises }));
+          console.log("Successfully fetched and cached new AI responses.");
+        } catch (error) {
+          console.error("Failed to save AI responses to localStorage:", error);
+        }
+      }
+      setIsFetchingBanter(false);
+  }, []);
+
+  // Load score and AI responses from localStorage on initial render
   useEffect(() => {
+    // Load score
     try {
       const savedScore = localStorage.getItem('pongPersistentScore');
       if (savedScore) {
@@ -233,13 +246,30 @@ const App: React.FC = () => {
     } catch (error) {
       console.error("Failed to load or parse score from localStorage:", error);
     }
-    
-    // Pre-fetch AI messages. State is already initialized with fallbacks,
-    // so we don't need to wait for this to complete.
-    generateTauntList().then(setTaunts);
-    generatePraiseList().then(setPraises);
 
-  }, []);
+    // Load AI responses from cache, or fetch if cache is empty
+    const loadAIResponses = async () => {
+      try {
+        const cachedResponses = localStorage.getItem('pongAiResponses');
+        if (cachedResponses) {
+          const { taunts, praises } = JSON.parse(cachedResponses);
+          if (Array.isArray(taunts) && taunts.length > 0 && Array.isArray(praises) && praises.length > 0) {
+            setTaunts(taunts);
+            setPraises(praises);
+            console.log("Loaded AI responses from cache.");
+            return;
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load or parse AI responses from localStorage:", error);
+      }
+      
+      // If cache is empty or invalid, fetch new ones.
+      await handleFetchBanter();
+    };
+
+    loadAIResponses();
+  }, [handleFetchBanter]);
 
   // Save score to localStorage whenever it changes
   useEffect(() => {
@@ -543,7 +573,16 @@ const App: React.FC = () => {
 }, [calibrationStep, calibrationHistory]);
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white font-mono p-4">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white font-mono p-4 relative">
+      {apiError && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-900/90 border-2 border-red-600 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center space-x-3 animate-simpleFadeIn max-w-lg text-center">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-red-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+            <span className="text-sm">{apiError}</span>
+            <button onClick={() => setApiError(null)} className="text-red-300 hover:text-white text-2xl leading-none flex-shrink-0">&times;</button>
+        </div>
+      )}
       <h1 className="text-5xl font-bold text-lime-400 mb-2 tracking-widest" style={{ textShadow: '0 0 10px #0f0' }}>
         PONG por Gestos
       </h1>
@@ -580,6 +619,8 @@ const App: React.FC = () => {
             onStartCalibrationSequence={startCalibrationSequence}
             calibrationStep={calibrationStep}
             showCalibrationSuccess={showCalibrationSuccess}
+            onFetchBanter={handleFetchBanter}
+            isFetchingBanter={isFetchingBanter}
           />
         )}
         <GameCanvas 

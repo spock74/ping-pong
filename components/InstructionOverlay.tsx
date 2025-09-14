@@ -15,6 +15,8 @@ interface InstructionOverlayProps {
   onStartCalibrationSequence: () => void;
   calibrationStep: 'start' | 'up' | 'down' | 'finished';
   showCalibrationSuccess: boolean;
+  onFetchBanter: () => void;
+  isFetchingBanter: boolean;
 }
 
 const LoadingSpinner: React.FC = () => (
@@ -86,7 +88,7 @@ const CalibrationScreen: React.FC<{
 };
 
 
-const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamReady, onStart, onRestart, difficulty, onDifficultyChange, gestureType, onGestureTypeChange, onCalibrate, onStartCalibrationSequence, calibrationStep, showCalibrationSuccess }) => {
+const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamReady, onStart, onRestart, difficulty, onDifficultyChange, gestureType, onGestureTypeChange, onCalibrate, onStartCalibrationSequence, calibrationStep, showCalibrationSuccess, onFetchBanter, isFetchingBanter }) => {
   const isIdle = status === 'idle';
   const isOver = status === 'over';
   const isPaused = status === 'paused';
@@ -109,6 +111,11 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
   const handleGestureChange = (type: GestureType) => {
     startAudioContext();
     onGestureTypeChange(type);
+  };
+  
+  const handleFetchBanter = () => {
+    startAudioContext();
+    onFetchBanter();
   };
 
   if (status === 'calibrating') {
@@ -194,7 +201,7 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
             <button
             onClick={handleStartGame}
             disabled={!webcamReady}
-            className="w-64 px-8 py-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
+            className="w-72 px-8 py-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
                 bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white
                 shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]"
             >
@@ -203,10 +210,18 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
             <button
             onClick={handleCalibrate}
             disabled={!webcamReady}
-            className="w-64 px-6 py-2 text-lg font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
+            className="w-72 px-6 py-2 text-lg font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
                 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white border-2 border-gray-600"
             >
             Calibrar Controles
+            </button>
+            <button
+            onClick={handleFetchBanter}
+            disabled={!webcamReady || isFetchingBanter}
+            className="w-72 px-6 py-2 text-lg font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
+                bg-blue-800 hover:bg-blue-700 text-gray-300 hover:text-white border-2 border-blue-700"
+            >
+            {isFetchingBanter ? 'Buscando...' : 'Novas Mensagens da IA'}
             </button>
             {!webcamReady && (
                 <div className="flex items-center justify-center pt-4">
