@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { GoogleGenAI, Type } from "@google/genai";
 import GameCanvas from './components/GameCanvas';
 import InstructionOverlay from './components/InstructionOverlay';
-import { GAME_HEIGHT, PADDLE_HEIGHT } from './constants';
+import { GAME_HEIGHT, PADDLE_HEIGHT, PADDLE_SMOOTHING_FACTOR } from './constants';
 import type { GameStatus, Difficulty, GestureType } from './types';
 
 // Declare MediaPipe and its utilities as global variables
@@ -194,6 +194,7 @@ const App: React.FC = () => {
   const landmarkCanvasRef = useRef<HTMLCanvasElement>(null);
   const handsRef = useRef<any>(null);
   const targetPlayerYRef = useRef<number>(GAME_HEIGHT / 2); // For paddle smoothing
+  const lastFrameTimeRef = useRef<number>(performance.now()); // For delta time calculation
 
   // --- Refs to mirror state for stable onResults callback ---
   const gameStatusRef = useRef(gameStatus);
@@ -225,8 +226,8 @@ const App: React.FC = () => {
         try {
           localStorage.setItem('pongAiResponses', JSON.stringify({ taunts, praises }));
           console.log("Successfully fetched and cached new AI responses.");
-        } catch (error) {
-          console.error("Failed to save AI responses to localStorage:", error);
+        } catch (e) {
+          console.error("Failed to save AI responses to localStorage:", e);
         }
       }
       setIsFetchingBanter(false);
@@ -247,8 +248,8 @@ const App: React.FC = () => {
       console.error("Failed to load or parse score from localStorage:", error);
     }
 
-    // Load AI responses from cache, or fetch if cache is empty
-    const loadAIResponses = async () => {
+    // Load AI responses from cache. DO NOT fetch automatically.
+    const loadAIResponses = () => {
       try {
         const cachedResponses = localStorage.getItem('pongAiResponses');
         if (cachedResponses) {
@@ -257,19 +258,15 @@ const App: React.FC = () => {
             setTaunts(taunts);
             setPraises(praises);
             console.log("Loaded AI responses from cache.");
-            return;
           }
         }
       } catch (error) {
         console.error("Failed to load or parse AI responses from localStorage:", error);
       }
-      
-      // If cache is empty or invalid, fetch new ones.
-      await handleFetchBanter();
     };
 
     loadAIResponses();
-  }, [handleFetchBanter]);
+  }, []);
 
   // Save score to localStorage whenever it changes
   useEffect(() => {
@@ -464,29 +461,34 @@ const App: React.FC = () => {
     }
   }, [onResults]);
   
-  // Paddle Smoothing Effect
+  // Frame-rate independent paddle smoothing
   useEffect(() => {
     let animationFrameId: number;
+    
+    const smoothPaddleMovement = (timestamp: number) => {
+      const dt = (timestamp - lastFrameTimeRef.current) / 1000; // Delta time in seconds
+      lastFrameTimeRef.current = timestamp;
 
-    const smoothPaddleMovement = () => {
       setPlayerY(prevY => {
         const targetY = targetPlayerYRef.current;
-        // If the difference is negligible, snap to target and stop updates to prevent re-renders
-        if (Math.abs(targetY - prevY) < 0.5) {
+        const diff = targetY - prevY;
+
+        if (Math.abs(diff) < 0.5) {
           return targetY;
         }
-        // Lerp function for smoothing. A value around 0.2 provides a good balance.
-        const smoothingFactor = 0.2; 
-        return prevY + (targetY - prevY) * smoothingFactor;
+
+        // Adjust smoothing factor based on delta time to ensure consistent feel across frame rates
+        const adjustedSmoothing = PADDLE_SMOOTHING_FACTOR * dt * 60;
+        return prevY + diff * Math.min(adjustedSmoothing, 1); // Clamp to prevent overshooting
       });
+      
       animationFrameId = requestAnimationFrame(smoothPaddleMovement);
     };
 
-    // Run smoothing loop when paddle control is expected (game is active, paused, or during calibration)
     if (gameStatus === 'running' || gameStatus === 'paused' || gameStatus === 'calibrating') {
+        lastFrameTimeRef.current = performance.now(); // Reset timer when starting
         animationFrameId = requestAnimationFrame(smoothPaddleMovement);
     } else {
-      // When game is idle or over, snap paddle to center.
       targetPlayerYRef.current = GAME_HEIGHT / 2;
       setPlayerY(GAME_HEIGHT / 2);
     }
@@ -495,6 +497,7 @@ const App: React.FC = () => {
       cancelAnimationFrame(animationFrameId);
     };
   }, [gameStatus]);
+
 
   const restartGame = () => {
     setGameStatus('idle');

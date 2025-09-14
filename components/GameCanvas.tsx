@@ -7,6 +7,9 @@ import {
   PADDLE_HEIGHT,
   WINNING_SCORE,
   DIFFICULTY_SETTINGS,
+  INITIAL_BALL_SPEED_Y_MAX,
+  INITIAL_BALL_SPEED_Y_MIN,
+  PADDLE_BOUNCE_VY_MULTIPLIER,
 } from '../constants';
 import type { GameStatus, Difficulty } from '../types';
 import {
@@ -32,22 +35,21 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
   const gameOverInitiated = useRef(false);
   const prevScoreRef = useRef({ player: 0, computer: 0 });
   const pointScoredRef = useRef(false); // Lock to prevent multiple scores per point
+  const lastTimeRef = useRef<number>(performance.now());
 
   const { paddleSpeedAI, initialBallSpeedX } = DIFFICULTY_SETTINGS[difficulty];
 
   const [ball, setBall] = useState({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
-  const [ballSpeed, setBallSpeed] = useState({ vx: initialBallSpeedX, vy: 2 });
-  const [computerY, setComputerY] = useState(GAME_HEIGHT / 2 - PADDLE_HEIGHT / 2);
+  const [ballSpeed, setBallSpeed] = useState({ vx: initialBallSpeedX, vy: 120 });
+  const [computerY, setComputerY] = useState(GAME_HEIGHT / 2);
   const [score, setScore] = useState({ player: 0, computer: 0 });
   const [isReady, setIsReady] = useState(false); // New state to prevent race condition
 
   const resetBall = useCallback((direction: number) => {
     setBall({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
     
-    // New vertical speed calculation to ensure a minimum speed
-    const MIN_ABS_VY = 1.5;
-    const MAX_ABS_VY = 3.5;
-    let vy = Math.random() * (MAX_ABS_VY - MIN_ABS_VY) + MIN_ABS_VY;
+    // Vertical speed calculation using pixels-per-second constants
+    let vy = Math.random() * (INITIAL_BALL_SPEED_Y_MAX - INITIAL_BALL_SPEED_Y_MIN) + INITIAL_BALL_SPEED_Y_MIN;
     if (Math.random() < 0.5) {
       vy = -vy;
     }
@@ -101,30 +103,36 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
 
     let animationFrameId: number;
 
-    const gameLoop = () => {
+    const gameLoop = (timestamp: number) => {
+      const dt = (timestamp - lastTimeRef.current) / 1000; // Delta time in seconds
+      lastTimeRef.current = timestamp;
+
       // 1. Calculate next state based on current state
-      let nextBall = { x: ball.x + ballSpeed.vx, y: ball.y + ballSpeed.vy };
+      let nextBall = { 
+        x: ball.x + ballSpeed.vx * dt, 
+        y: ball.y + ballSpeed.vy * dt 
+      };
       let nextBallSpeed = { ...ballSpeed };
 
-      // AI movement (based on current ball position)
+      // AI movement (frame-rate independent)
       setComputerY(prevY => {
         const diff = ball.y - prevY;
         let newY = prevY;
         if (Math.abs(diff) > 10) { // Dead zone to prevent jitter
-            newY = prevY + Math.sign(diff) * paddleSpeedAI;
+            newY = prevY + Math.sign(diff) * paddleSpeedAI * dt;
         }
         const minPaddleY = PADDLE_HEIGHT / 2;
         const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
         return Math.max(minPaddleY, Math.min(newY, maxPaddleY));
       });
 
-      // 2. Collision detection & response for walls (perfectly elastic)
+      // 2. Collision detection & response for walls
       if (nextBall.y > GAME_HEIGHT - BALL_RADIUS) {
-        nextBall.y = GAME_HEIGHT - BALL_RADIUS; // Clamp position to the boundary
+        nextBall.y = GAME_HEIGHT - BALL_RADIUS;
         nextBallSpeed.vy = -nextBallSpeed.vy;
         playWallHit();
       } else if (nextBall.y < BALL_RADIUS) {
-        nextBall.y = BALL_RADIUS; // Clamp position to the boundary
+        nextBall.y = BALL_RADIUS;
         nextBallSpeed.vy = -nextBallSpeed.vy;
         playWallHit();
       }
@@ -135,30 +143,30 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
       const computerPaddleTop = computerY - PADDLE_HEIGHT / 2;
       const computerPaddleBottom = computerY + PADDLE_HEIGHT / 2;
 
-      // Player paddle: Check if the ball is moving left and crosses the paddle's plane
+      // Player paddle
       if (
         nextBallSpeed.vx < 0 &&
         nextBall.x - BALL_RADIUS <= PADDLE_WIDTH * 3 &&
         ball.x - BALL_RADIUS > PADDLE_WIDTH * 3
       ) {
         if (nextBall.y > playerPaddleTop && nextBall.y < playerPaddleBottom) {
-          nextBall.x = PADDLE_WIDTH * 3 + BALL_RADIUS; // Snap to outside paddle
+          nextBall.x = PADDLE_WIDTH * 3 + BALL_RADIUS;
           const intersectY = (playerY - nextBall.y) / (PADDLE_HEIGHT / 2);
-          const newVy = -intersectY * 5;
-          nextBallSpeed.vx = -nextBallSpeed.vx * 1.05;
+          const newVy = -intersectY * PADDLE_BOUNCE_VY_MULTIPLIER;
+          nextBallSpeed.vx = -nextBallSpeed.vx * 1.05; // Increase speed slightly
           nextBallSpeed.vy = newVy;
           playPaddleHit();
         }
       }
 
-      // Computer paddle: Check if the ball is moving right and crosses the paddle's plane
+      // Computer paddle
       if (
         nextBallSpeed.vx > 0 &&
         nextBall.x + BALL_RADIUS >= GAME_WIDTH - PADDLE_WIDTH * 3 &&
         ball.x + BALL_RADIUS < GAME_WIDTH - PADDLE_WIDTH * 3
       ) {
         if (nextBall.y > computerPaddleTop && nextBall.y < computerPaddleBottom) {
-           nextBall.x = GAME_WIDTH - PADDLE_WIDTH * 3 - BALL_RADIUS; // Snap to outside
+           nextBall.x = GAME_WIDTH - PADDLE_WIDTH * 3 - BALL_RADIUS;
            nextBallSpeed.vx = -nextBallSpeed.vx;
            playPaddleHit();
         }
@@ -166,7 +174,6 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
 
       // 4. Scoring
       if (nextBall.x < 0) {
-        // Computer scores
         if (!pointScoredRef.current) {
           pointScoredRef.current = true;
           onPointScored('computer');
@@ -174,7 +181,6 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
           playScoreSound();
         }
       } else if (nextBall.x > GAME_WIDTH) {
-        // Player scores
         if (!pointScoredRef.current) {
           pointScoredRef.current = true;
           onPointScored('player');
@@ -200,7 +206,8 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
       animationFrameId = requestAnimationFrame(gameLoop);
     };
 
-    gameLoop();
+    lastTimeRef.current = performance.now(); // Reset timer when loop starts
+    animationFrameId = requestAnimationFrame(gameLoop);
 
     return () => {
       cancelAnimationFrame(animationFrameId);
@@ -217,6 +224,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
       setScore(newScore);
       prevScoreRef.current = newScore;
       resetBall(Math.random() > 0.5 ? 1 : -1);
+      setComputerY(GAME_HEIGHT / 2);
       setIsReady(true); // Game is ready after reset
     } else {
       setIsReady(false); // Not ready if not running
@@ -262,12 +270,25 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
       onGameOver(winner);
       playGameOverSound();
       // Brief delay to let the final score register before showing the overlay.
-      // This prevents the game from feeling like it ended abruptly.
       setTimeout(() => {
           setGameStatus('over');
       }, 500);
     }
   }, [score, status, setGameStatus, onGameOver, isReady]);
+  
+  // Draw initial state when not running
+  useEffect(() => {
+    if (status !== 'running') {
+        const canvas = canvasRef.current;
+        if (canvas) {
+            const context = canvas.getContext('2d');
+            if (context) {
+                draw(context);
+            }
+        }
+    }
+  }, [status, draw]);
+
 
   return (
     <canvas

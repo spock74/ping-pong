@@ -4,28 +4,32 @@ import type { Difficulty } from './types';
 export const GAME_WIDTH = 1280;
 export const GAME_HEIGHT = 720;
 
-// Ball properties
+// Ball properties (pixels)
 export const BALL_RADIUS = 10;
+export const INITIAL_BALL_SPEED_Y_MIN = 90; // pixels per second
+export const INITIAL_BALL_SPEED_Y_MAX = 210; // pixels per second
 
-// Paddle properties
+// Paddle properties (pixels)
 export const PADDLE_WIDTH = 15;
 export const PADDLE_HEIGHT = 120;
+export const PADDLE_BOUNCE_VY_MULTIPLIER = 300;
+export const PADDLE_SMOOTHING_FACTOR = 0.2; // Base factor for 60fps smoothing adjustment
 
 // Game rules
 export const WINNING_SCORE = 5;
 
-// Difficulty settings
+// Difficulty settings (values are in pixels per second)
 export const DIFFICULTY_SETTINGS: { [key in Difficulty]: { paddleSpeedAI: number, initialBallSpeedX: number } } = {
   easy: {
-    paddleSpeedAI: 3,
-    initialBallSpeedX: 4,
+    paddleSpeedAI: 180,
+    initialBallSpeedX: 240,
   },
   medium: {
-    paddleSpeedAI: 4,
-    initialBallSpeedX: 5,
+    paddleSpeedAI: 240,
+    initialBallSpeedX: 300,
   },
   hard: {
-    paddleSpeedAI: 6,
-    initialBallSpeedX: 7,
+    paddleSpeedAI: 360,
+    initialBallSpeedX: 420,
   },
 };
