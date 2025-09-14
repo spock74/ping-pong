@@ -378,22 +378,38 @@ const App: React.FC = () => {
           const calibrationSpan = calibrationRangeRef.current.max - calibrationRangeRef.current.min;
           let newY: number;
 
-          // Use calibrated range if it's valid (e.g., covers at least 10% of the screen)
-          if (calibrationSpan > 0.1) {
-            // Map hand's vertical position within calibrated range to paddle's travel range.
-            const normalizedY = (wrist.y - calibrationRangeRef.current.min) / calibrationSpan;
-            newY = (normalizedY * paddleTravelRange) + (PADDLE_HEIGHT / 2);
+          if (calibrationSpan > 0.1) { // A valid calibration exists
+              // Expand the calibrated range and apply a scaling factor for more responsive control.
+              // This creates a "buffer" at the edges, requiring the user to move past their
+              // calibrated points to reach the screen's absolute top or bottom.
+              // The scaling factor makes the paddle move a larger distance on screen than the hand does.
+              const CALIBRATION_EXPANSION_NORMALIZED = PADDLE_HEIGHT / GAME_HEIGHT; // ~0.167
+              const PADDLE_MOVEMENT_SCALING_FACTOR = 1.2; // Paddle moves 20% more than hand
+
+              const expandedMin = calibrationRangeRef.current.min - CALIBRATION_EXPANSION_NORMALIZED;
+              const expandedMax = calibrationRangeRef.current.max + CALIBRATION_EXPANSION_NORMALIZED;
+              const expandedSpan = expandedMax - expandedMin;
+
+              // Normalize the hand's position within the new expanded range
+              let normalizedY = (wrist.y - expandedMin) / expandedSpan;
+
+              // Apply the scaling factor, pivoting around the center (0.5)
+              normalizedY = 0.5 + (normalizedY - 0.5) * PADDLE_MOVEMENT_SCALING_FACTOR;
+
+              // Map the final normalized value to the paddle's on-screen travel range
+              newY = (normalizedY * paddleTravelRange) + (PADDLE_HEIGHT / 2);
           } else {
-            // Fallback to default full-range mapping.
-            newY = (wrist.y * paddleTravelRange) + (PADDLE_HEIGHT / 2);
+              // Fallback to default full-range mapping if no valid calibration.
+              newY = (wrist.y * paddleTravelRange) + (PADDLE_HEIGHT / 2);
           }
 
-          // Final clamp to ensure the paddle never goes off-screen
+          // Final clamp to ensure the paddle never goes off-screen, which is crucial
+          // especially after scaling the movement.
           const minPaddleY = PADDLE_HEIGHT / 2;
           const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
           const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
 
-          // Update target position for smoothing instead of setting state directly
+          // Update target position for smoothing
           targetPlayerYRef.current = clampedY;
         }
       }
