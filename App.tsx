@@ -380,11 +380,12 @@ const App: React.FC = () => {
 
           // Use calibrated range if it's valid (e.g., covers at least 10% of the screen)
           if (calibrationSpan > 0.1) {
-            const normalizedY = (wrist.y - calibrationRangeRef.current.min) / calibrationSpan;
+            // Invert the Y-axis based on user feedback about "mirroring". Hand up = paddle down.
+            const normalizedY = 1 - ((wrist.y - calibrationRangeRef.current.min) / calibrationSpan);
             newY = (normalizedY * paddleTravelRange) + (PADDLE_HEIGHT / 2);
           } else {
-            // Fallback to default full-range mapping
-            newY = (wrist.y * paddleTravelRange) + (PADDLE_HEIGHT / 2);
+            // Fallback to default full-range mapping (also inverted)
+            newY = ((1 - wrist.y) * paddleTravelRange) + (PADDLE_HEIGHT / 2);
           }
 
           // Final clamp to ensure the paddle never goes off-screen

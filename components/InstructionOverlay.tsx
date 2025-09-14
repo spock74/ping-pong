@@ -153,21 +153,21 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
   }
 
   return (
-    <div className="relative absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center text-center p-8 z-10">
-      <h2 className="text-6xl font-bold mb-4" style={{ textShadow: '0 0 10px #0f0' }}>
+    <div className="relative absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center text-center p-4 z-10">
+      <h2 className="text-5xl font-bold mb-4" style={{ textShadow: '0 0 10px #0f0' }}>
         {isIdle ? 'Prepare-se!' : 'Fim de Jogo!'}
       </h2>
       
       {isIdle && (
         <>
-          <p className="text-lg mb-6 max-w-2xl leading-relaxed">
+          <p className="text-lg mb-4 max-w-2xl leading-relaxed">
             Controle a raquete <span className="text-lime-400 font-bold">verde</span> com o gesto selecionado. <br />
             Faça um <span className="text-blue-400 font-bold">joinha (👍)</span> para iniciar.
             Pause com a <span className="text-yellow-400 font-bold">mão espalhada 🖐️</span>.
             Resete com o <span className="text-red-500 font-bold">polegar para baixo (👎)</span>.
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 mb-4">
             <div>
               <h3 className="text-xl text-gray-400 uppercase tracking-wider mb-3">Dificuldade</h3>
               <div className="flex justify-center space-x-4">
@@ -200,56 +200,90 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
       {isOver && (
          <button
             onClick={handleRestart}
-            className="px-8 py-4 mb-6 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]"
+            className="px-8 py-4 mb-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]"
         >
             Jogar Novamente
         </button>
       )}
 
       {isIdle && (
-        <div className="flex flex-col items-center space-y-4">
+        <div className="flex flex-col items-center space-y-2">
             <button
-            onClick={handleStartGame}
-            disabled={!webcamReady}
-            className="w-72 px-8 py-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
-                bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white
-                shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]"
-            >
-            Iniciar Jogo
-            </button>
-            <button
-            onClick={handleCalibrate}
-            disabled={!webcamReady}
-            className="w-72 px-6 py-2 text-lg font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
-                bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white border-2 border-gray-600"
-            >
-            Calibrar Controles
-            </button>
-            <button
-            onClick={handleFetchBanter}
-            disabled={!webcamReady || isFetchingBanter}
-            className="w-72 px-6 py-2 text-lg font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
-                bg-blue-800 hover:bg-blue-700 text-gray-300 hover:text-white border-2 border-blue-700"
-            >
-            {isFetchingBanter ? 'Buscando...' : 'Novas Mensagens da IA'}
-            </button>
-            <button
-              onClick={handleSoundToggle}
+              onClick={handleStartGame}
               disabled={!webcamReady}
-              className="w-72 px-6 py-2 text-lg font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
-                  bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white border-2 border-gray-600 flex items-center justify-center space-x-3"
+              className="w-72 px-8 py-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
+                  bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white
+                  shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]"
             >
-              {isSoundEnabled ? (
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                </svg>
-              ) : (
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 9.75L19.5 12m0 0l2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                </svg>
-              )}
-              <span>Som: {isSoundEnabled ? 'Ligado' : 'Desligado'}</span>
+              Iniciar Jogo
             </button>
+
+            <div className="grid grid-cols-2 gap-3 w-72">
+                <button
+                onClick={handleCalibrate}
+                disabled={!webcamReady}
+                className="w-full px-4 py-3 text-base font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
+                    bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white border-2 border-gray-600"
+                >
+                Calibrar
+                </button>
+                <button
+                onClick={handleFetchBanter}
+                disabled={!webcamReady || isFetchingBanter}
+                className="w-full px-4 py-3 text-base font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
+                    bg-blue-800 hover:bg-blue-700 text-gray-300 hover:text-white border-2 border-blue-700"
+                >
+                {isFetchingBanter ? 'Buscando...' : 'Mensagens IA'}
+                </button>
+            </div>
+
+            {/* Sound Toggle Switch */}
+            <div
+              onClick={!webcamReady ? undefined : handleSoundToggle}
+              className={`
+                w-72 px-6 py-2 text-lg font-bold rounded-lg transition-all duration-300
+                bg-gray-700 text-gray-300 border-2 border-gray-600
+                flex items-center justify-between
+                ${!webcamReady ? 'opacity-50 cursor-not-allowed' : 'transform hover:scale-105 hover:bg-gray-600 hover:text-white cursor-pointer'}
+              `}
+              aria-label={isSoundEnabled ? "Desativar som" : "Ativar som"}
+              role="button"
+              tabIndex={!webcamReady ? -1 : 0}
+              onKeyDown={(e) => {
+                  if (!webcamReady) return;
+                  if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleSoundToggle();
+                  }
+              }}
+            >
+              <span className="flex items-center space-x-3 pointer-events-none">
+                {isSoundEnabled ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M17.25 9.75L19.5 12m0 0l2.25 2.25M19.5 12l2.25-2.25M19.5 12l-2.25 2.25M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+                  </svg>
+                )}
+                <span>Som</span>
+              </span>
+              <div
+                role="switch"
+                aria-checked={isSoundEnabled}
+                className={`
+                  pointer-events-none relative inline-flex flex-shrink-0 items-center h-8 w-14 rounded-full transition-colors duration-300 ease-in-out
+                  ${isSoundEnabled ? 'bg-lime-500' : 'bg-gray-800 border-2 border-gray-600'}
+                `}
+              >
+                <span className={`
+                  inline-block h-6 w-6 transform rounded-full bg-white transition-transform duration-300 ease-in-out
+                  shadow-lg
+                  ${isSoundEnabled ? 'translate-x-7' : 'translate-x-1'}
+                `} />
+              </div>
+            </div>
             {!webcamReady && (
                 <div className="flex items-center justify-center pt-4">
                 <LoadingSpinner />
