@@ -44,7 +44,6 @@ const DifficultyButton: React.FC<{
 const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamReady, onStart, onRestart, difficulty, onDifficultyChange, showCalibrationSuccess, isSoundEnabled, onSoundToggle }) => {
   const isIdle = status === 'idle';
   const isOver = status === 'over';
-  const isPaused = status === 'paused';
 
   const handleStartGame = () => {
     startAudioContext();
@@ -64,19 +63,6 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
     onSoundToggle(!isSoundEnabled);
   };
 
-  if (isPaused) {
-    return (
-      <div className="absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center text-center p-8 z-10">
-        <h2 className="text-6xl font-bold mb-4 animate-pulse" style={{ textShadow: '0 0 10px #0f0' }}>
-          Jogo Pausado
-        </h2>
-        <p className="text-xl mt-4">
-          Faça o gesto de mão espalhada (🖐️) para continuar.
-        </p>
-      </div>
-    );
-  }
-
   return (
     <div className="relative absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center text-center p-4 z-10">
       <h2 className="text-5xl font-bold mb-4" style={{ textShadow: '0 0 10px #0f0' }}>
@@ -87,10 +73,9 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
         <>
           <p className="text-lg mb-4 max-w-2xl leading-relaxed">
             Controle a raquete <span className="text-lime-400 font-bold">verde</span> com a mão fechada (✊). <br />
-            Faça <span className="text-blue-400 font-bold">joinha (👍)</span> para iniciar.
-            Use <span className="text-orange-400 font-bold">vitória (✌️)</span> para calibrar. <br />
-            Pause com <span className="text-yellow-400 font-bold">mão espalhada (🖐️)</span>.
-            Resete com <span className="text-red-500 font-bold">polegar para baixo (👎)</span>.
+            Use <span className="text-orange-400 font-bold">vitória (✌️)</span> para calibrar.
+            Faça <span className="text-blue-400 font-bold">joinha (👍)</span> para iniciar o jogo. <br />
+            Resete o placar com <span className="text-red-500 font-bold">polegar para baixo (👎)</span>.
           </p>
 
           <div className="flex flex-col items-center gap-y-4 mb-6">

@@ -67,7 +67,7 @@ const generateAIResponses = async (): Promise<{ taunts: string[], praises: strin
 // --- End Gemini API Logic ---
 
 // --- Gesture Detection Logic ---
-type HandGesture = 'fist' | 'pointer' | 'spread' | 'thumbs_up' | 'thumbs_down' | 'victory' | 'open' | 'unknown';
+type HandGesture = 'fist' | 'pointer' | 'thumbs_up' | 'thumbs_down' | 'victory' | 'open' | 'unknown';
 
 const isLandmarkVisible = (landmark: any) =>
   landmark &&
@@ -89,7 +89,6 @@ const detectGesture = (landmarks: any[]): HandGesture => {
     }
     
     // Landmark indices from MediaPipe Hands documentation
-    const WRIST = 0;
     const THUMB_TIP = 4;
     const INDEX_FINGER_TIP = 8;
     const MIDDLE_FINGER_TIP = 12;
@@ -109,14 +108,11 @@ const detectGesture = (landmarks: any[]): HandGesture => {
     const isMiddleExtended = landmarks[MIDDLE_FINGER_TIP].y < landmarks[MIDDLE_FINGER_PIP].y;
     const isRingExtended = landmarks[RING_FINGER_TIP].y < landmarks[RING_FINGER_PIP].y;
     const isPinkyExtended = landmarks[PINKY_TIP].y < landmarks[PINKY_PIP].y;
-    const isThumbExtended = landmarks[THUMB_TIP].x < landmarks[THUMB_IP].x; // For selfie mode, lower X is away from palm
     const isThumbDown = landmarks[THUMB_TIP].y > landmarks[THUMB_IP].y;
 
     // Stricter checks for thumb gestures to avoid confusion with fist
     const isThumbClearlyUp = landmarks[THUMB_TIP].y < landmarks[INDEX_FINGER_PIP].y;
     const isThumbClearlyDown = landmarks[THUMB_TIP].y > landmarks[MIDDLE_FINGER_MCP].y;
-
-    const allFingersExtended = isIndexExtended && isMiddleExtended && isRingExtended && isPinkyExtended;
 
     // --- Finger curled checks ---
     const areFingersCurled = 
@@ -158,28 +154,6 @@ const detectGesture = (landmarks: any[]): HandGesture => {
     // 5. Fist - Refined to prevent conflict with thumbs_up
     if (areFingersCurled && !isThumbClearlyUp) {
         return 'fist';
-    }
-
-    // 6. Open hand gestures (Spread)
-    if (allFingersExtended && isThumbExtended) {
-        // Calculate a reference distance for spread, e.g., palm height
-        const palmHeight = Math.hypot(
-            landmarks[WRIST].x - landmarks[MIDDLE_FINGER_MCP].x,
-            landmarks[WRIST].y - landmarks[MIDDLE_FINGER_MCP].y,
-        );
-        
-        // Distance between index and pinky fingertips
-        const spreadDistance = Math.hypot(
-             landmarks[INDEX_FINGER_TIP].x - landmarks[PINKY_TIP].x,
-             landmarks[INDEX_FINGER_TIP].y - landmarks[PINKY_TIP].y,
-        );
-
-        // Heuristic thresholds based on palm height
-        const SPREAD_THRESHOLD = palmHeight * 1.1;
-        
-        if (spreadDistance > SPREAD_THRESHOLD) {
-            return 'spread';
-        }
     }
     
     return 'open'; // Default if no specific gesture is matched
@@ -338,127 +312,141 @@ const App: React.FC = () => {
     const handIsCurrentlyVisible = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
 
     if (handIsCurrentlyVisible) {
-      const handLandmarks = results.multiHandLandmarks[0];
-      const gesture = detectGesture(handLandmarks);
-      setCurrentGesture(gesture);
-      
-      const controlPoint = handLandmarks[9];
-      if (!isLandmarkVisible(controlPoint)) return;
-      
-      if (gameStatusRef.current === 'calibrating') {
-          const paddleY = controlPoint.y * GAME_HEIGHT;
+      // --- THE DEFINITIVE CRASH FIX: TRY/CATCH BLOCK ---
+      // This is the ultimate safeguard. Any unexpected error from MediaPipe's
+      // data structure (e.g., incomplete landmarks array leading to an
+      // `undefined` access) will be caught here, preventing the entire
+      // React component from crashing.
+      try {
+        const handLandmarks = results.multiHandLandmarks[0];
 
-          // --- DEFINITIVE CRASH FIX for Calibration ---
-          // Validate the calculated paddle position before setting the state.
-          if (!Number.isFinite(paddleY)) {
-              // If the value is invalid (NaN/Infinity), do not update the state.
-              // This prevents the component from crashing when hand tracking is lost at the edge.
-              return;
-          }
-          setCalibrationPaddleY(paddleY);
+        // Structural Integrity Check (First line of defense)
+        if (!handLandmarks || handLandmarks.length < 21) {
+          return;
+        }
 
-          const CALIBRATION_HOLD_TIME = 1500; // 1.5 seconds
+        const gesture = detectGesture(handLandmarks);
+        setCurrentGesture(gesture);
+        
+        const controlPoint = handLandmarks[9]; // Middle finger MCP is our control point
 
-          if (calibrationStepRef.current === 'setting_top') {
-              const paddleTopEdge = paddleY - PADDLE_HEIGHT / 2;
-              if (paddleTopEdge <= 5) { // Check if paddle is at the top edge
-                  if (!calibrationHoldStartRef.current) {
-                      calibrationHoldStartRef.current = performance.now();
-                  } else {
-                      const elapsed = performance.now() - calibrationHoldStartRef.current;
-                      const progress = Math.min(elapsed / CALIBRATION_HOLD_TIME, 1);
-                      setCalibrationHoldProgress(progress);
+        // Landmark Visibility Check (Second line of defense)
+        if (!isLandmarkVisible(controlPoint)) {
+            return;
+        }
+        
+        if (gameStatusRef.current === 'calibrating') {
+            const paddleY = controlPoint.y * GAME_HEIGHT;
 
-                      if (elapsed >= CALIBRATION_HOLD_TIME) {
-                          calibrationDataRef.current.min = controlPoint.y;
-                          console.log(`Locked TOP at ${controlPoint.y}`);
-                          setCalibrationStep('setting_bottom');
-                          calibrationHoldStartRef.current = null;
-                          setCalibrationHoldProgress(0);
-                          setLockedBoundaries(prev => ({ ...prev, top: PADDLE_HEIGHT / 2 }));
-                      }
-                  }
-              } else {
-                  calibrationHoldStartRef.current = null;
-                  setCalibrationHoldProgress(0);
-              }
-          } else if (calibrationStepRef.current === 'setting_bottom') {
-              const paddleBottomEdge = paddleY + PADDLE_HEIGHT / 2;
-              if (paddleBottomEdge >= GAME_HEIGHT - 5) { // Check if paddle is at bottom edge
-                  if (!calibrationHoldStartRef.current) {
-                      calibrationHoldStartRef.current = performance.now();
-                  } else {
-                      const elapsed = performance.now() - calibrationHoldStartRef.current;
-                      const progress = Math.min(elapsed / CALIBRATION_HOLD_TIME, 1);
-                      setCalibrationHoldProgress(progress);
-
-                      if (elapsed >= CALIBRATION_HOLD_TIME) {
-                          calibrationDataRef.current.max = controlPoint.y;
-                          console.log(`Locked BOTTOM at ${controlPoint.y}`);
-                          setCalibrationStep('finished');
-                          calibrationHoldStartRef.current = null;
-                          setCalibrationHoldProgress(0);
-                          setLockedBoundaries(prev => ({ ...prev, bottom: GAME_HEIGHT - PADDLE_HEIGHT / 2 }));
-                      }
-                  }
-              } else {
-                  calibrationHoldStartRef.current = null;
-                  setCalibrationHoldProgress(0);
-              }
-          }
-      }
-
-      if (!gestureActionLockRef.current) {
-          if (gesture === 'victory' && gameStatusRef.current === 'idle') {
-              startCalibrationSequence();
-              gestureActionLockRef.current = true;
-              setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
-          } else if (gesture === 'spread') {
-              if (gameStatusRef.current === 'running') setGameStatus('paused');
-              else if (gameStatusRef.current === 'paused') setGameStatus('running');
-              if (['running', 'paused'].includes(gameStatusRef.current)) {
-                  gestureActionLockRef.current = true;
-                  setTimeout(() => { gestureActionLockRef.current = false; }, 1000);
-              }
-          } else if (gesture === 'thumbs_down') {
-              handleFullReset();
-              gestureActionLockRef.current = true;
-              setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
-          } else if (gesture === 'thumbs_up' && gameStatusRef.current === 'idle') {
-              startGame();
-              gestureActionLockRef.current = true;
-              setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
-          }
-      }
-      
-      if (gameStatusRef.current === 'running' && gesture === 'fist') {
-        const calibrationSpan = calibrationRangeRef.current.max - calibrationRangeRef.current.min;
-        const isCalibrationValid = calibrationSpan > 0.1;
-
-        if (isCalibrationValid) {
-            let normalizedY = (controlPoint.y - calibrationRangeRef.current.min) / calibrationSpan;
-            if (!Number.isFinite(normalizedY)) {
-                setDebugInfo({ error: `Invalid normY: ${String(normalizedY)}`, rawY: controlPoint.y.toFixed(4) });
+            if (!Number.isFinite(paddleY)) {
                 return;
             }
-            const clampedNormalizedY = Math.max(0, Math.min(1, normalizedY));
-            const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
-            const minPaddleY = PADDLE_HEIGHT / 2;
-            const newY = (clampedNormalizedY * paddleTravelRange) + minPaddleY;
-            targetPlayerYRef.current = newY;
-            setDebugInfo({ status: 'Calibrated', rawY: controlPoint.y.toFixed(3), normY: normalizedY.toFixed(3), finalY: newY.toFixed(3) });
-        } else {
-            const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
-            const unmappedY = controlPoint.y * paddleTravelRange;
-            if (!Number.isFinite(unmappedY)) return;
-            const newY = unmappedY + (PADDLE_HEIGHT / 2);
-            const minPaddleY = PADDLE_HEIGHT / 2;
-            const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
-            const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
-            if (!Number.isFinite(clampedY)) return;
-            targetPlayerYRef.current = clampedY;
-            setDebugInfo({ status: 'No calibration', rawY: controlPoint.y.toFixed(3), finalY: clampedY.toFixed(3) });
+            setCalibrationPaddleY(paddleY);
+
+            const CALIBRATION_HOLD_TIME = 1500; // 1.5 seconds
+
+            if (calibrationStepRef.current === 'setting_top') {
+                const paddleTopEdge = paddleY - PADDLE_HEIGHT / 2;
+                if (paddleTopEdge <= 5) { // Check if paddle is at the top edge
+                    if (!calibrationHoldStartRef.current) {
+                        calibrationHoldStartRef.current = performance.now();
+                    } else {
+                        const elapsed = performance.now() - calibrationHoldStartRef.current;
+                        const progress = Math.min(elapsed / CALIBRATION_HOLD_TIME, 1);
+                        setCalibrationHoldProgress(progress);
+
+                        if (elapsed >= CALIBRATION_HOLD_TIME) {
+                            calibrationDataRef.current.min = controlPoint.y;
+                            console.log(`Locked TOP at ${controlPoint.y}`);
+                            setCalibrationStep('setting_bottom');
+                            calibrationHoldStartRef.current = null;
+                            setCalibrationHoldProgress(0);
+                            setLockedBoundaries(prev => ({ ...prev, top: PADDLE_HEIGHT / 2 }));
+                        }
+                    }
+                } else {
+                    calibrationHoldStartRef.current = null;
+                    setCalibrationHoldProgress(0);
+                }
+            } else if (calibrationStepRef.current === 'setting_bottom') {
+                const paddleBottomEdge = paddleY + PADDLE_HEIGHT / 2;
+                if (paddleBottomEdge >= GAME_HEIGHT - 5) { // Check if paddle is at bottom edge
+                    if (!calibrationHoldStartRef.current) {
+                        calibrationHoldStartRef.current = performance.now();
+                    } else {
+                        const elapsed = performance.now() - calibrationHoldStartRef.current;
+                        const progress = Math.min(elapsed / CALIBRATION_HOLD_TIME, 1);
+                        setCalibrationHoldProgress(progress);
+
+                        if (elapsed >= CALIBRATION_HOLD_TIME) {
+                            calibrationDataRef.current.max = controlPoint.y;
+                            console.log(`Locked BOTTOM at ${controlPoint.y}`);
+                            setCalibrationStep('finished');
+                            calibrationHoldStartRef.current = null;
+                            setCalibrationHoldProgress(0);
+                            setLockedBoundaries(prev => ({ ...prev, bottom: GAME_HEIGHT - PADDLE_HEIGHT / 2 }));
+                        }
+                    }
+                } else {
+                    calibrationHoldStartRef.current = null;
+                    setCalibrationHoldProgress(0);
+                }
+            }
         }
+
+        if (!gestureActionLockRef.current) {
+            if (gesture === 'victory' && gameStatusRef.current === 'idle') {
+                startCalibrationSequence();
+                gestureActionLockRef.current = true;
+                setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
+            } else if (gesture === 'thumbs_down') {
+                // CRASH FIX: Only allow reset if hand is in the central vertical "safe zone"
+                const isHandInSafeZone = controlPoint.y > 0.25 && controlPoint.y < 0.75;
+                if (isHandInSafeZone) {
+                    handleFullReset();
+                    gestureActionLockRef.current = true;
+                    setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
+                }
+            } else if (gesture === 'thumbs_up' && gameStatusRef.current === 'idle') {
+                startGame();
+                gestureActionLockRef.current = true;
+                setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
+            }
+        }
+        
+        if (gameStatusRef.current === 'running' && gesture === 'fist') {
+          const calibrationSpan = calibrationRangeRef.current.max - calibrationRangeRef.current.min;
+          const isCalibrationValid = calibrationSpan > 0.1;
+
+          if (isCalibrationValid) {
+              let normalizedY = (controlPoint.y - calibrationRangeRef.current.min) / calibrationSpan;
+              if (!Number.isFinite(normalizedY)) {
+                  setDebugInfo({ error: `Invalid normY: ${String(normalizedY)}`, rawY: controlPoint.y.toFixed(4) });
+                  return;
+              }
+              const clampedNormalizedY = Math.max(0, Math.min(1, normalizedY));
+              const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
+              const minPaddleY = PADDLE_HEIGHT / 2;
+              const newY = (clampedNormalizedY * paddleTravelRange) + minPaddleY;
+              targetPlayerYRef.current = newY;
+              setDebugInfo({ status: 'Calibrated', rawY: controlPoint.y.toFixed(3), normY: normalizedY.toFixed(3), finalY: newY.toFixed(3) });
+          } else {
+              const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
+              const unmappedY = controlPoint.y * paddleTravelRange;
+              if (!Number.isFinite(unmappedY)) return;
+              const newY = unmappedY + (PADDLE_HEIGHT / 2);
+              const minPaddleY = PADDLE_HEIGHT / 2;
+              const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
+              const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
+              if (!Number.isFinite(clampedY)) return;
+              targetPlayerYRef.current = clampedY;
+              setDebugInfo({ status: 'No calibration', rawY: controlPoint.y.toFixed(3), finalY: clampedY.toFixed(3) });
+          }
+        }
+      } catch (error) {
+        console.error("A critical error occurred during hand processing:", error);
+        // This catch block prevents the entire application from crashing.
+        // The game will simply miss one frame of input.
       }
     } else {
       setCurrentGesture('unknown');
@@ -515,7 +503,7 @@ const App: React.FC = () => {
       });
       animationFrameId = requestAnimationFrame(smoothPaddleMovement);
     };
-    if (gameStatus === 'running' || gameStatus === 'paused') {
+    if (gameStatus === 'running') {
         lastFrameTimeRef.current = performance.now();
         animationFrameId = requestAnimationFrame(smoothPaddleMovement);
     } else {
