@@ -2,6 +2,8 @@ import React from 'react';
 import type { GameStatus, Difficulty, GestureType } from '../types';
 import { startAudioContext } from '../utils/sounds';
 
+type CalibrationStep = 'start' | 'point_up' | 'point_down' | 'finished';
+
 interface InstructionOverlayProps {
   status: GameStatus;
   webcamReady: boolean;
@@ -11,12 +13,9 @@ interface InstructionOverlayProps {
   onDifficultyChange: (difficulty: Difficulty) => void;
   gestureType: GestureType;
   onGestureTypeChange: (type: GestureType) => void;
-  onCalibrate: () => void;
   onStartCalibrationSequence: () => void;
-  calibrationStep: 'start' | 'up' | 'down' | 'finished';
+  calibrationStep: CalibrationStep;
   showCalibrationSuccess: boolean;
-  onFetchBanter: () => void;
-  isFetchingBanter: boolean;
   isSoundEnabled: boolean;
   onSoundToggle: (enabled: boolean) => void;
 }
@@ -50,7 +49,7 @@ const DifficultyButton: React.FC<{
 
 const CalibrationScreen: React.FC<{
   onStartCalibrationSequence: () => void;
-  step: 'start' | 'up' | 'down' | 'finished';
+  step: CalibrationStep;
 }> = ({ onStartCalibrationSequence, step }) => {
   const handleStart = () => {
     startAudioContext();
@@ -64,7 +63,7 @@ const CalibrationScreen: React.FC<{
           Calibração
         </h2>
         <p className="text-lg mb-8 max-w-md">
-          Vamos mapear sua área de movimento em um único gesto para um controle perfeito.
+          Aponte para os alvos na tela para definir sua amplitude de movimento e ter um controle perfeito. Faça o gesto de vitória (✌️) no menu para calibrar novamente.
         </p>
         <button onClick={handleStart} className="px-8 py-4 text-2xl font-bold rounded-lg transition-all duration-300 transform hover:scale-105 bg-gradient-to-r from-lime-500 to-green-500 hover:from-lime-400 hover:to-green-400 text-white shadow-[0_0_15px_#0f0] hover:shadow-[0_0_25px_#0f0]">
           Iniciar
@@ -73,14 +72,14 @@ const CalibrationScreen: React.FC<{
     );
   }
 
-  if (step === 'up' || step === 'down') {
+  if (step === 'point_up' || step === 'point_down') {
     return (
       <div className="flex flex-col items-center justify-center text-center">
         <h2 className="text-5xl font-bold mb-4 text-lime-400 animate-pulse" style={{ textShadow: '0 0 10px #0f0' }}>
-          {step === 'up' ? 'Mova para CIMA ⬆️' : 'Agora para BAIXO ⬇️'}
+          {step === 'point_up' ? 'Aponte para CIMA ⬆️' : 'Agora para BAIXO ⬇️'}
         </h2>
         <p className="text-lg mt-4 max-w-md">
-          Com a <span className="font-bold text-yellow-300">mão fechada</span>, mova-a lentamente até que desapareça completamente da tela.
+          Use o gesto de <span className="font-bold text-yellow-300">APONTAR (👆)</span> e mire no alvo que apareceu na tela. Mantenha a posição até ele brilhar.
         </p>
       </div>
     );
@@ -90,7 +89,7 @@ const CalibrationScreen: React.FC<{
 };
 
 
-const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamReady, onStart, onRestart, difficulty, onDifficultyChange, gestureType, onGestureTypeChange, onCalibrate, onStartCalibrationSequence, calibrationStep, showCalibrationSuccess, onFetchBanter, isFetchingBanter, isSoundEnabled, onSoundToggle }) => {
+const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamReady, onStart, onRestart, difficulty, onDifficultyChange, gestureType, onGestureTypeChange, onStartCalibrationSequence, calibrationStep, showCalibrationSuccess, isSoundEnabled, onSoundToggle }) => {
   const isIdle = status === 'idle';
   const isOver = status === 'over';
   const isPaused = status === 'paused';
@@ -104,22 +103,12 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
     startAudioContext();
     onRestart();
   };
-  
-  const handleCalibrate = () => {
-    startAudioContext();
-    onCalibrate();
-  };
 
   const handleGestureChange = (type: GestureType) => {
     startAudioContext();
     onGestureTypeChange(type);
   };
   
-  const handleFetchBanter = () => {
-    startAudioContext();
-    onFetchBanter();
-  };
-
   const handleSoundToggle = () => {
     // Attempt to start audio context if user is enabling sound for the first time
     if (!isSoundEnabled) {
@@ -146,7 +135,7 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
           Jogo Pausado
         </h2>
         <p className="text-xl mt-4">
-          Faça o gesto de mão espalhada para continuar.
+          Faça o gesto de mão espalhada (🖐️) para continuar.
         </p>
       </div>
     );
@@ -162,9 +151,10 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
         <>
           <p className="text-lg mb-4 max-w-2xl leading-relaxed">
             Controle a raquete <span className="text-lime-400 font-bold">verde</span> com o gesto selecionado. <br />
-            Faça um <span className="text-blue-400 font-bold">joinha (👍)</span> para iniciar.
-            Pause com a <span className="text-yellow-400 font-bold">mão espalhada 🖐️</span>.
-            Resete com o <span className="text-red-500 font-bold">polegar para baixo (👎)</span>.
+            Faça <span className="text-blue-400 font-bold">joinha (👍)</span> para iniciar.
+            Use <span className="text-orange-400 font-bold">vitória (✌️)</span> para calibrar. <br />
+            Pause com <span className="text-yellow-400 font-bold">mão espalhada (🖐️)</span>.
+            Resete com <span className="text-red-500 font-bold">polegar para baixo (👎)</span>.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 mb-4">
@@ -207,7 +197,7 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
       )}
 
       {isIdle && (
-        <div className="flex flex-col items-center space-y-2">
+        <div className="flex flex-col items-center space-y-3">
             <button
               onClick={handleStartGame}
               disabled={!webcamReady}
@@ -217,26 +207,7 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
             >
               Iniciar Jogo
             </button>
-
-            <div className="grid grid-cols-2 gap-3 w-72">
-                <button
-                onClick={handleCalibrate}
-                disabled={!webcamReady}
-                className="w-full px-4 py-3 text-base font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
-                    bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white border-2 border-gray-600"
-                >
-                Calibrar
-                </button>
-                <button
-                onClick={handleFetchBanter}
-                disabled={!webcamReady || isFetchingBanter}
-                className="w-full px-4 py-3 text-base font-bold rounded-lg transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100
-                    bg-blue-800 hover:bg-blue-700 text-gray-300 hover:text-white border-2 border-blue-700"
-                >
-                {isFetchingBanter ? 'Buscando...' : 'Mensagens IA'}
-                </button>
-            </div>
-
+            
             {/* Sound Toggle Switch */}
             <div
               onClick={!webcamReady ? undefined : handleSoundToggle}

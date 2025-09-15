@@ -66,7 +66,7 @@ const generateAIResponses = async (): Promise<{ taunts: string[], praises: strin
 // --- End Gemini API Logic ---
 
 // --- Gesture Detection Logic ---
-type HandGesture = 'fist' | 'pointer' | 'spread' | 'thumbs_up' | 'thumbs_down' | 'open' | 'unknown';
+type HandGesture = 'fist' | 'pointer' | 'spread' | 'thumbs_up' | 'thumbs_down' | 'victory' | 'open' | 'unknown';
 
 const detectGesture = (landmarks: any[]): HandGesture => {
     if (!landmarks || landmarks.length < 21) {
@@ -115,29 +115,37 @@ const detectGesture = (landmarks: any[]): HandGesture => {
         landmarks[RING_FINGER_TIP].y > landmarks[RING_FINGER_PIP].y &&
         landmarks[PINKY_TIP].y > landmarks[PINKY_PIP].y;
     
+    const isRingCurled = landmarks[RING_FINGER_TIP].y > landmarks[RING_FINGER_PIP].y;
+    const isPinkyCurled = landmarks[PINKY_TIP].y > landmarks[PINKY_PIP].y;
+    
     // --- Gesture recognition (ordered by specificity) ---
 
-    // 1. Thumbs up (Stricter)
+    // 1. Victory (✌️)
+    if (isIndexExtended && isMiddleExtended && isRingCurled && isPinkyCurled) {
+        return 'victory';
+    }
+
+    // 2. Thumbs up (Stricter)
     if (isThumbClearlyUp && areFingersCurled) {
         return 'thumbs_up';
     }
 
-    // 2. Thumbs down (Stricter)
+    // 3. Thumbs down (Stricter)
     if (isThumbDown && isThumbClearlyDown && areFingersCurled) {
         return 'thumbs_down';
     }
 
-    // 3. Pointer
+    // 4. Pointer
     if (isIndexExtended && areOthersCurledForPointer) {
         return 'pointer';
     }
 
-    // 4. Fist - Refined to prevent conflict with thumbs_up
+    // 5. Fist - Refined to prevent conflict with thumbs_up
     if (areFingersCurled && !isThumbClearlyUp) {
         return 'fist';
     }
 
-    // 5. Open hand gestures (Spread)
+    // 6. Open hand gestures (Spread)
     if (allFingersExtended && isThumbExtended) {
         // Calculate a reference distance for spread, e.g., palm height
         const palmHeight = Math.hypot(
@@ -163,6 +171,7 @@ const detectGesture = (landmarks: any[]): HandGesture => {
 };
 // --- End Gesture Detection ---
 
+type CalibrationStep = 'start' | 'point_up' | 'point_down' | 'finished';
 
 const App: React.FC = () => {
   const [gameStatus, setGameStatus] = useState<GameStatus>('idle');
@@ -176,7 +185,6 @@ const App: React.FC = () => {
   const [taunts, setTaunts] = useState<string[]>(FALLBACK_TAUNTS);
   const [praises, setPraises] = useState<string[]>(FALLBACK_PRAISES);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [isFetchingBanter, setIsFetchingBanter] = useState(false);
   const [currentGesture, setCurrentGesture] = useState<HandGesture>('unknown');
   const [isSoundEnabled, setIsSoundEnabled] = useState<boolean>(() => {
     try {
@@ -189,21 +197,20 @@ const App: React.FC = () => {
   const aiMessageTimeoutRef = useRef<number | null>(null);
   
   // Calibration State
-  const [calibrationStep, setCalibrationStep] = useState<'start' | 'up' | 'down' | 'finished'>('start');
+  const [calibrationStep, setCalibrationStep] = useState<CalibrationStep>('start');
   const [calibrationRange, setCalibrationRange] = useState({ min: 1, max: 0 });
-  const [calibrationHistory, setCalibrationHistory] = useState<{min: number, max: number}[]>([]);
   const [showCalibrationSuccess, setShowCalibrationSuccess] = useState(false);
+  const [calibrationFeedback, setCalibrationFeedback] = useState<{x: number, y: number} | null>(null);
+  const [pointerPosition, setPointerPosition] = useState<{x: number, y: number} | null>(null);
   const calibrationDataRef = useRef({ min: 1, max: 0 });
-  const calibrationCaptureRef = useRef({ transientMin: 1, transientMax: 0 }); // For robust calibration
+  const calibrationLockRef = useRef(false);
   const gestureActionLockRef = useRef(false); // Cooldown for pause/reset gestures
-  const lastHandPositionRef = useRef<number | null>(null);
-  const handVisibleRef = useRef<boolean>(false);
+  const lastFrameTimeRef = useRef<number>(performance.now()); // For delta time calculation
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const landmarkCanvasRef = useRef<HTMLCanvasElement>(null);
   const handsRef = useRef<any>(null);
   const targetPlayerYRef = useRef<number>(GAME_HEIGHT / 2); // For paddle smoothing
-  const lastFrameTimeRef = useRef<number>(performance.now()); // For delta time calculation
 
   // --- Refs to mirror state for stable onResults callback ---
   const gameStatusRef = useRef(gameStatus);
@@ -217,30 +224,6 @@ const App: React.FC = () => {
   
   const calibrationStepRef = useRef(calibrationStep);
   useEffect(() => { calibrationStepRef.current = calibrationStep; }, [calibrationStep]);
-
-  const handleFetchBanter = useCallback(async () => {
-      setIsFetchingBanter(true);
-      setApiError(null);
-      console.log("Fetching new AI responses...");
-      const { taunts, praises, success, error } = await generateAIResponses();
-      setTaunts(taunts);
-      setPraises(praises);
-      
-      if (error) {
-          setApiError(error);
-          setTimeout(() => setApiError(null), 10000); // Auto-hide after 10 seconds
-      }
-
-      if (success) {
-        try {
-          localStorage.setItem('pongAiResponses', JSON.stringify({ taunts, praises }));
-          console.log("Successfully fetched and cached new AI responses.");
-        } catch (e) {
-          console.error("Failed to save AI responses to localStorage:", e);
-        }
-      }
-      setIsFetchingBanter(false);
-  }, []);
 
   // Load score and AI responses from localStorage on initial render
   useEffect(() => {
@@ -299,7 +282,6 @@ const App: React.FC = () => {
   const handleFullReset = useCallback(() => {
     console.log("Performing full reset.");
     setPersistentScore({ player: 0, computer: 0 });
-    setCalibrationHistory([]);
     setCalibrationRange({ min: 1, max: 0 });
     setGameStatus('idle');
   }, []);
@@ -331,8 +313,6 @@ const App: React.FC = () => {
     }
 
     const handIsCurrentlyVisible = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
-    const handWasPreviouslyVisible = handVisibleRef.current;
-    handVisibleRef.current = handIsCurrentlyVisible;
 
     // Handle game logic that requires a visible hand
     if (handIsCurrentlyVisible) {
@@ -340,23 +320,62 @@ const App: React.FC = () => {
       const gesture = detectGesture(handLandmarks);
       setCurrentGesture(gesture);
       
-      const currentY = handLandmarks[0].y;
-      lastHandPositionRef.current = currentY; 
+      // --- New Point-and-Hold Calibration Logic ---
+      if (gameStatusRef.current === 'calibrating' && gesture === 'pointer') {
+          const indexTip = handLandmarks[8]; // Index finger tip
+          const wrist = handLandmarks[0]; // Wrist position for mapping
+          const screenX = indexTip.x; // Direct mapping based on user feedback
 
-      // --- New Calibration Capture Logic ---
-      // Continuously track the most extreme position of the wrist during calibration,
-      // regardless of the gesture, for a more accurate edge detection.
-      if (gameStatusRef.current === 'calibrating') {
-          if (calibrationStepRef.current === 'up') {
-              calibrationCaptureRef.current.transientMin = Math.min(calibrationCaptureRef.current.transientMin, currentY);
-          } else if (calibrationStepRef.current === 'down') {
-              calibrationCaptureRef.current.transientMax = Math.max(calibrationCaptureRef.current.transientMax, currentY);
+          // Update pointer position for visual feedback
+          setPointerPosition({ x: screenX, y: indexTip.y });
+
+          // Define target areas (normalized coordinates)
+          const TARGET_RADIUS = 0.04; // Smaller radius for higher precision
+          const TARGET_TOP = { x: 0.15, y: 0.10 };
+          const TARGET_BOTTOM = { x: 0.15, y: 0.90 };
+
+          if (calibrationStepRef.current === 'point_up' && !calibrationLockRef.current) {
+              const distance = Math.hypot(screenX - TARGET_TOP.x, indexTip.y - TARGET_TOP.y);
+              if (distance < TARGET_RADIUS) {
+                  calibrationLockRef.current = true;
+                  calibrationDataRef.current.min = wrist.y;
+                  console.log(`Calibrated TOP boundary at: ${wrist.y}`);
+                  setCalibrationFeedback(TARGET_TOP); // Trigger visual feedback
+                  setPointerPosition(null); // Hide pointer during feedback
+                  setTimeout(() => {
+                      setCalibrationStep('point_down');
+                      setCalibrationFeedback(null);
+                      calibrationLockRef.current = false;
+                  }, 1000); // Wait 1s for feedback animation
+              }
+          } else if (calibrationStepRef.current === 'point_down' && !calibrationLockRef.current) {
+              const distance = Math.hypot(screenX - TARGET_BOTTOM.x, indexTip.y - TARGET_BOTTOM.y);
+              if (distance < TARGET_RADIUS) {
+                  calibrationLockRef.current = true;
+                  calibrationDataRef.current.max = wrist.y;
+                  console.log(`Calibrated BOTTOM boundary at: ${wrist.y}`);
+                  setCalibrationFeedback(TARGET_BOTTOM); // Trigger feedback
+                  setPointerPosition(null); // Hide pointer during feedback
+                  setTimeout(() => {
+                      setCalibrationStep('finished');
+                      setCalibrationFeedback(null);
+                      calibrationLockRef.current = false;
+                  }, 1000); // Wait 1s
+              }
           }
+      } else {
+        // Clear pointer if not in calibration or not pointing
+        setPointerPosition(null);
       }
 
-      // --- Handle Game State Gestures (Pause/Reset/Start) with cooldown ---
+
+      // --- Handle Game State Gestures (Pause/Reset/Start/Calibrate) with cooldown ---
       if (!gestureActionLockRef.current) {
-          if (gesture === 'spread') {
+          if (gesture === 'victory' && gameStatusRef.current === 'idle') {
+              setGameStatus('calibrating');
+              gestureActionLockRef.current = true;
+              setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown
+          } else if (gesture === 'spread') {
               if (gameStatusRef.current === 'running') {
                   setGameStatus('paused');
                   gestureActionLockRef.current = true;
@@ -414,29 +433,7 @@ const App: React.FC = () => {
       }
     } else {
       setCurrentGesture('unknown');
-    }
-
-    // --- New Calibration State Machine ---
-    if (gameStatusRef.current === 'calibrating') {
-      // Trigger state change when hand disappears from view
-      if (handWasPreviouslyVisible && !handIsCurrentlyVisible) {
-        
-        // Check for finishing the 'up' step
-        if (calibrationStepRef.current === 'up') {
-          // Capture the most extreme point, not the last seen point.
-          calibrationDataRef.current.min = calibrationCaptureRef.current.transientMin;
-          console.log(`Calibrated TOP boundary at: ${calibrationDataRef.current.min}`);
-          setCalibrationStep('down');
-        }
-        
-        // Check for finishing the 'down' step
-        else if (calibrationStepRef.current === 'down') {
-          // Capture the most extreme point recorded during the downward movement.
-          calibrationDataRef.current.max = calibrationCaptureRef.current.transientMax;
-          console.log(`Calibrated BOTTOM boundary at: ${calibrationDataRef.current.max}`);
-          setCalibrationStep('finished');
-        }
-      }
+      setPointerPosition(null);
     }
   }, [handleFullReset, startGame]);
 
@@ -579,10 +576,9 @@ const App: React.FC = () => {
 
   const startCalibrationSequence = useCallback(() => {
     calibrationDataRef.current = { min: 1, max: 0 }; // Reset for new capture
-    calibrationCaptureRef.current = { transientMin: 1, transientMax: 0 }; // Reset transient capture
-    lastHandPositionRef.current = null;
-    handVisibleRef.current = false;
-    setCalibrationStep('up');
+    calibrationLockRef.current = false;
+    setCalibrationFeedback(null);
+    setCalibrationStep('point_up');
   }, []);
 
   useEffect(() => {
@@ -593,23 +589,18 @@ const App: React.FC = () => {
         const newRange = calibrationDataRef.current;
         // Check if a valid range was captured
         if (newRange.min < newRange.max && (newRange.max - newRange.min > 0.1)) {
-            const newHistory = [...calibrationHistory, newRange];
-            setCalibrationHistory(newHistory);
+            // Use ONLY the latest calibration data. This is more robust than averaging.
+            setCalibrationRange({ min: newRange.min, max: newRange.max });
             
-            // Calculate the average of all calibrations
-            const avgMin = newHistory.reduce((sum, r) => sum + r.min, 0) / newHistory.length;
-            const avgMax = newHistory.reduce((sum, r) => sum + r.max, 0) / newHistory.length;
-            
-            setCalibrationRange({ min: avgMin, max: avgMax });
-
             // Show success message
             setShowCalibrationSuccess(true);
             setTimeout(() => setShowCalibrationSuccess(false), 4000);
+            console.log("Calibration successful. New range:", newRange);
         } else {
             console.warn("Calibration failed: insufficient or invalid movement detected.", newRange);
         }
     }
-}, [calibrationStep, calibrationHistory]);
+}, [calibrationStep]);
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white font-mono p-4 relative">
@@ -654,12 +645,9 @@ const App: React.FC = () => {
             onDifficultyChange={setDifficulty}
             gestureType={gestureType}
             onGestureTypeChange={setGestureType}
-            onCalibrate={() => setGameStatus('calibrating')}
             onStartCalibrationSequence={startCalibrationSequence}
             calibrationStep={calibrationStep}
             showCalibrationSuccess={showCalibrationSuccess}
-            onFetchBanter={handleFetchBanter}
-            isFetchingBanter={isFetchingBanter}
             isSoundEnabled={isSoundEnabled}
             onSoundToggle={setIsSoundEnabled}
           />
@@ -671,6 +659,9 @@ const App: React.FC = () => {
             onGameOver={handleGameOver}
             difficulty={difficulty}
             onPointScored={handlePointScored}
+            calibrationStep={gameStatus === 'calibrating' ? calibrationStep : null}
+            calibrationFeedback={calibrationFeedback}
+            pointerPosition={pointerPosition}
         />
          {aiMessage && (
           <div 

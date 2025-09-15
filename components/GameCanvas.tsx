@@ -28,9 +28,12 @@ interface GameCanvasProps {
   onGameOver: (winner: 'player' | 'computer') => void;
   difficulty: Difficulty;
   onPointScored: (scorer: 'player' | 'computer') => void;
+  calibrationStep: 'start' | 'point_up' | 'point_down' | 'finished' | null;
+  calibrationFeedback: { x: number; y: number } | null;
+  pointerPosition: { x: number; y: number } | null;
 }
 
-const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty, onPointScored }) => {
+const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty, onPointScored, calibrationStep, calibrationFeedback, pointerPosition }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameOverInitiated = useRef(false);
   const prevScoreRef = useRef({ player: 0, computer: 0 });
@@ -96,7 +99,68 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     ctx.fillStyle = '#ff0000';
     ctx.fillText(score.computer.toString(), (GAME_WIDTH * 3) / 4, 70);
 
-  }, [playerY, ball, computerY, score]);
+     // --- Draw Calibration UI ---
+    if (status === 'calibrating') {
+        if (calibrationStep) {
+            const drawTarget = (x: number, y: number, color: string) => {
+                ctx.save();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 3;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = color;
+                // Draw a reticle
+                ctx.beginPath();
+                ctx.arc(x, y, 30, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(x - 40, y);
+                ctx.lineTo(x + 40, y);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(x, y - 40);
+                ctx.lineTo(x, y + 40);
+                ctx.stroke();
+                ctx.restore();
+            }
+
+            if (calibrationStep === 'point_up') {
+                drawTarget(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.10, '#00ff00');
+            } else if (calibrationStep === 'point_down') {
+                drawTarget(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.90, '#00ff00');
+            }
+        }
+        
+        // Draw pointer feedback dot
+        if (pointerPosition) {
+            ctx.save();
+            ctx.fillStyle = 'yellow';
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = 'yellow';
+            ctx.beginPath();
+            ctx.arc(pointerPosition.x * GAME_WIDTH, pointerPosition.y * GAME_HEIGHT, 10, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // Draw feedback glow
+    if (calibrationFeedback) {
+        const { x, y } = calibrationFeedback;
+        const canvasX = x * GAME_WIDTH;
+        const canvasY = y * GAME_HEIGHT;
+        
+        ctx.save();
+        const gradient = ctx.createRadialGradient(canvasX, canvasY, 10, canvasX, canvasY, 80);
+        gradient.addColorStop(0, 'rgba(255, 255, 0, 0.8)');
+        gradient.addColorStop(1, 'rgba(255, 255, 0, 0)');
+        ctx.fillStyle = gradient;
+        ctx.beginPath();
+        ctx.arc(canvasX, canvasY, 80, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+  }, [playerY, ball, computerY, score, status, calibrationStep, calibrationFeedback, pointerPosition]);
 
   useEffect(() => {
     if (status !== 'running') return;
@@ -287,7 +351,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
             }
         }
     }
-  }, [status, draw]);
+  }, [status, draw, calibrationStep, calibrationFeedback, pointerPosition]);
 
 
   return (
