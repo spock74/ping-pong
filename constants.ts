@@ -6,6 +6,8 @@ export const GAME_HEIGHT = 720;
 
 // Ball properties (pixels)
 export const BALL_RADIUS = 10;
+export const BALL_SPEED_INCREASE_FACTOR = 1.03; // Speed multiplier on each paddle hit
+export const MAX_BALL_SPEED_MULTIPLIER = 2.5;  // Max speed relative to initial speed
 export const INITIAL_BALL_SPEED_Y_MIN = 90; // pixels per second
 export const INITIAL_BALL_SPEED_Y_MAX = 210; // pixels per second
 

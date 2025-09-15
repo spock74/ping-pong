@@ -10,6 +10,8 @@ import {
   INITIAL_BALL_SPEED_Y_MAX,
   INITIAL_BALL_SPEED_Y_MIN,
   PADDLE_BOUNCE_VY_MULTIPLIER,
+  BALL_SPEED_INCREASE_FACTOR,
+  MAX_BALL_SPEED_MULTIPLIER,
 } from '../constants';
 import type { GameStatus, Difficulty } from '../types';
 import {
@@ -41,6 +43,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
   const lastTimeRef = useRef<number>(performance.now());
 
   const { paddleSpeedAI, initialBallSpeedX } = DIFFICULTY_SETTINGS[difficulty];
+  const maxBallSpeedX = initialBallSpeedX * MAX_BALL_SPEED_MULTIPLIER;
 
   const [ball, setBall] = useState({ x: GAME_WIDTH / 2, y: GAME_HEIGHT / 2 });
   const [ballSpeed, setBallSpeed] = useState({ vx: initialBallSpeedX, vy: 120 });
@@ -249,7 +252,13 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
             nextBall.x = playerCollisionPlaneX;
             const intersectYRatio = (playerY - intersectionY) / (PADDLE_HEIGHT / 2);
             const newVy = -intersectYRatio * PADDLE_BOUNCE_VY_MULTIPLIER;
-            nextBallSpeed.vx = -nextBallSpeed.vx * 1.05;
+            
+            let newVx = -nextBallSpeed.vx * BALL_SPEED_INCREASE_FACTOR;
+            // Cap the speed to keep the game playable
+            if (Math.abs(newVx) > maxBallSpeedX) {
+              newVx = Math.sign(newVx) * maxBallSpeedX;
+            }
+            nextBallSpeed.vx = newVx;
             nextBallSpeed.vy = newVy;
             playPaddleHit();
           }
@@ -270,7 +279,13 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
           const intersectionY = ball.y + dy * t;
           if (intersectionY >= computerPaddleTop && intersectionY <= computerPaddleBottom) {
             nextBall.x = computerCollisionPlaneX;
-            nextBallSpeed.vx = -nextBallSpeed.vx;
+
+            let newVx = -nextBallSpeed.vx * BALL_SPEED_INCREASE_FACTOR;
+            // Cap the speed to keep the game playable
+            if (Math.abs(newVx) > maxBallSpeedX) {
+                newVx = Math.sign(newVx) * maxBallSpeedX;
+            }
+            nextBallSpeed.vx = newVx;
             playPaddleHit();
           }
         }
@@ -316,7 +331,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [status, ball, ballSpeed, playerY, computerY, draw, resetBall, paddleSpeedAI, onPointScored]);
+  }, [status, ball, ballSpeed, playerY, computerY, draw, resetBall, paddleSpeedAI, onPointScored, maxBallSpeedX]);
 
   // Reset game state when status changes
   useEffect(() => {
