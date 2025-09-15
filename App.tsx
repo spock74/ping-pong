@@ -67,7 +67,7 @@ const generateAIResponses = async (): Promise<{ taunts: string[], praises: strin
 // --- End Gemini API Logic ---
 
 // --- Gesture Detection Logic ---
-type HandGesture = 'fist' | 'pointer' | 'thumbs_up' | 'thumbs_down' | 'victory' | 'open' | 'unknown';
+type HandGesture = 'fist' | 'pointer' | 'thumbs_up' | 'victory' | 'open' | 'unknown';
 
 const isLandmarkVisible = (landmark: any) =>
   landmark &&
@@ -95,24 +95,17 @@ const detectGesture = (landmarks: any[]): HandGesture => {
     const RING_FINGER_TIP = 16;
     const PINKY_TIP = 20;
 
-    const THUMB_IP = 3;
     const INDEX_FINGER_PIP = 6;
     const MIDDLE_FINGER_PIP = 10;
     const RING_FINGER_PIP = 14;
     const PINKY_PIP = 18;
     
-    const MIDDLE_FINGER_MCP = 9;
-
     // --- Finger extension checks ---
     const isIndexExtended = landmarks[INDEX_FINGER_TIP].y < landmarks[INDEX_FINGER_PIP].y;
     const isMiddleExtended = landmarks[MIDDLE_FINGER_TIP].y < landmarks[MIDDLE_FINGER_PIP].y;
-    const isRingExtended = landmarks[RING_FINGER_TIP].y < landmarks[RING_FINGER_PIP].y;
-    const isPinkyExtended = landmarks[PINKY_TIP].y < landmarks[PINKY_PIP].y;
-    const isThumbDown = landmarks[THUMB_TIP].y > landmarks[THUMB_IP].y;
 
     // Stricter checks for thumb gestures to avoid confusion with fist
     const isThumbClearlyUp = landmarks[THUMB_TIP].y < landmarks[INDEX_FINGER_PIP].y;
-    const isThumbClearlyDown = landmarks[THUMB_TIP].y > landmarks[MIDDLE_FINGER_MCP].y;
 
     // --- Finger curled checks ---
     const areFingersCurled = 
@@ -141,17 +134,12 @@ const detectGesture = (landmarks: any[]): HandGesture => {
         return 'thumbs_up';
     }
 
-    // 3. Thumbs down (Stricter)
-    if (isThumbDown && isThumbClearlyDown && areFingersCurled) {
-        return 'thumbs_down';
-    }
-
-    // 4. Pointer
+    // 3. Pointer
     if (isIndexExtended && areOthersCurledForPointer) {
         return 'pointer';
     }
 
-    // 5. Fist - Refined to prevent conflict with thumbs_up
+    // 4. Fist - Refined to prevent conflict with thumbs_up
     if (areFingersCurled && !isThumbClearlyUp) {
         return 'fist';
     }
@@ -279,13 +267,6 @@ const App: React.FC = () => {
     setCalibrationStep('setting_top');
   }, []);
 
-  const handleFullReset = useCallback(() => {
-    console.log("Performing full reset.");
-    setPersistentScore({ player: 0, computer: 0 });
-    setCalibrationRange({ min: 1, max: 0 });
-    setGameStatus('idle');
-  }, []);
-  
   const startGame = useCallback(() => {
     setGameStatus('running');
   }, []);
@@ -399,14 +380,6 @@ const App: React.FC = () => {
                 startCalibrationSequence();
                 gestureActionLockRef.current = true;
                 setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
-            } else if (gesture === 'thumbs_down') {
-                // CRASH FIX: Only allow reset if hand is in the central vertical "safe zone"
-                const isHandInSafeZone = controlPoint.y > 0.25 && controlPoint.y < 0.75;
-                if (isHandInSafeZone) {
-                    handleFullReset();
-                    gestureActionLockRef.current = true;
-                    setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
-                }
             } else if (gesture === 'thumbs_up' && gameStatusRef.current === 'idle') {
                 startGame();
                 gestureActionLockRef.current = true;
@@ -451,7 +424,7 @@ const App: React.FC = () => {
     } else {
       setCurrentGesture('unknown');
     }
-  }, [handleFullReset, startGame, startCalibrationSequence]);
+  }, [startGame, startCalibrationSequence]);
 
   useEffect(() => {
     if (typeof window.Hands === 'undefined') {

@@ -12,7 +12,6 @@ Gesture Pong Arcade is a modern take on the classic Pong game, built with a retr
 -   **Game State Control via Gestures:**
     -   **Start Game:** Give a thumbs-up (👍).
     -   **Calibrate:** Make a victory gesture (✌️) from the main menu.
-    -   **Full Reset:** Give a thumbs-down (👎) to reset the score and return to the main menu.
 -   **Adjustable Difficulty:** Choose between Easy, Medium, and Hard modes to match your skill level.
 -   **Direct Control Calibration:** An intuitive calibration sequence where you physically move the paddle to the screen edges to map your personal range of motion for precise control.
 -   **Persistent Scoring:** Your overall win/loss record against the AI is saved locally, so you can track your legacy.

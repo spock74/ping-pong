@@ -73,9 +73,7 @@ const InstructionOverlay: React.FC<InstructionOverlayProps> = ({ status, webcamR
         <>
           <p className="text-lg mb-4 max-w-2xl leading-relaxed">
             Controle a raquete <span className="text-lime-400 font-bold">verde</span> com a mão fechada (✊). <br />
-            Use <span className="text-orange-400 font-bold">vitória (✌️)</span> para calibrar.
-            Faça <span className="text-blue-400 font-bold">joinha (👍)</span> para iniciar o jogo. <br />
-            Resete o placar com <span className="text-red-500 font-bold">polegar para baixo (👎)</span>.
+            Use <span className="text-orange-400 font-bold">vitória (✌️)</span> para calibrar e <span className="text-blue-400 font-bold">joinha (👍)</span> para iniciar o jogo.
           </p>
 
           <div className="flex flex-col items-center gap-y-4 mb-6">
