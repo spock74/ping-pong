@@ -544,30 +544,34 @@ const App: React.FC = () => {
       const dt = (timestamp - lastFrameTimeRef.current) / 1000; // Delta time in seconds
       lastFrameTimeRef.current = timestamp;
 
-      // This pre-check is good, but the ultimate guard is inside the state updater.
-      if (!Number.isFinite(targetPlayerYRef.current)) {
-          animationFrameId = requestAnimationFrame(smoothPaddleMovement);
-          return; // Skip this frame's update entirely.
-      }
+      const targetY = targetPlayerYRef.current;
+      
+      // Add logging to trace values just before the check
+      setDebugInfo(prev => ({
+        ...prev,
+        anim_target: typeof targetY === 'number' ? targetY.toFixed(3) : String(targetY),
+      }));
 
+      // The final, robust safety check is now inside the state updater
       setPlayerY(prevY => {
-        const targetY = targetPlayerYRef.current;
+        // If the target value from gesture detection is invalid, ignore it for this frame.
+        if (!Number.isFinite(targetY)) {
+          return prevY;
+        }
+        
         const diff = targetY - prevY;
-
         if (Math.abs(diff) < 0.5) {
-          return targetY;
+          return targetY; // targetY is known to be a finite number here.
         }
 
-        // Adjust smoothing factor based on delta time to ensure consistent feel across frame rates
         const adjustedSmoothing = PADDLE_SMOOTHING_FACTOR * dt * 60;
         const newY = prevY + diff * Math.min(adjustedSmoothing, 1);
         
-        // **** THE ULTIMATE CRASH FIX ****
-        // After all calculations, validate the final value before returning it.
-        // If it's not a finite number, a crash is imminent. Abort the state update.
+        // Final validation on the calculated smoothed value.
         if (Number.isFinite(newY)) {
           return newY;
         }
+
         return prevY; // Return the last known good state.
       });
       
