@@ -544,11 +544,7 @@ const App: React.FC = () => {
       const dt = (timestamp - lastFrameTimeRef.current) / 1000; // Delta time in seconds
       lastFrameTimeRef.current = timestamp;
 
-      // DEFINITIVE CRASH FIX: This is the final safeguard.
-      // The onResults callback sets targetPlayerYRef.current. This animation loop
-      // consumes it. If onResults produces a NaN for even one frame, and this
-      // loop runs before it's corrected, the setPlayerY call will crash React.
-      // This check ensures that an invalid value is NEVER passed to the state setter.
+      // This pre-check is good, but the ultimate guard is inside the state updater.
       if (!Number.isFinite(targetPlayerYRef.current)) {
           animationFrameId = requestAnimationFrame(smoothPaddleMovement);
           return; // Skip this frame's update entirely.
@@ -564,7 +560,15 @@ const App: React.FC = () => {
 
         // Adjust smoothing factor based on delta time to ensure consistent feel across frame rates
         const adjustedSmoothing = PADDLE_SMOOTHING_FACTOR * dt * 60;
-        return prevY + diff * Math.min(adjustedSmoothing, 1); // Clamp to prevent overshooting
+        const newY = prevY + diff * Math.min(adjustedSmoothing, 1);
+        
+        // **** THE ULTIMATE CRASH FIX ****
+        // After all calculations, validate the final value before returning it.
+        // If it's not a finite number, a crash is imminent. Abort the state update.
+        if (Number.isFinite(newY)) {
+          return newY;
+        }
+        return prevY; // Return the last known good state.
       });
       
       animationFrameId = requestAnimationFrame(smoothPaddleMovement);

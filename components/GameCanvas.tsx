@@ -227,38 +227,52 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
         playWallHit();
       }
       
-      // 3. Collision detection & response for paddles
+      // 3. Robust paddle collision detection to prevent "tunneling"
       const playerPaddleTop = playerY - PADDLE_HEIGHT / 2;
       const playerPaddleBottom = playerY + PADDLE_HEIGHT / 2;
       const computerPaddleTop = computerY - PADDLE_HEIGHT / 2;
       const computerPaddleBottom = computerY + PADDLE_HEIGHT / 2;
 
       // Player paddle
+      const playerCollisionPlaneX = PADDLE_WIDTH * 3 + BALL_RADIUS;
       if (
-        nextBallSpeed.vx < 0 &&
-        nextBall.x - BALL_RADIUS <= PADDLE_WIDTH * 3 &&
-        ball.x - BALL_RADIUS > PADDLE_WIDTH * 3
+        nextBallSpeed.vx < 0 && // Moving left
+        nextBall.x <= playerCollisionPlaneX && // Has crossed or is on the plane
+        ball.x > playerCollisionPlaneX // Was previously to the right of the plane
       ) {
-        if (nextBall.y > playerPaddleTop && nextBall.y < playerPaddleBottom) {
-          nextBall.x = PADDLE_WIDTH * 3 + BALL_RADIUS;
-          const intersectY = (playerY - nextBall.y) / (PADDLE_HEIGHT / 2);
-          const newVy = -intersectY * PADDLE_BOUNCE_VY_MULTIPLIER;
-          nextBallSpeed.vx = -nextBallSpeed.vx * 1.05; // Increase speed slightly
-          nextBallSpeed.vy = newVy;
-          playPaddleHit();
+        const dx = nextBall.x - ball.x;
+        if (dx !== 0) {
+          const dy = nextBall.y - ball.y;
+          const t = (playerCollisionPlaneX - ball.x) / dx;
+          const intersectionY = ball.y + dy * t;
+          if (intersectionY >= playerPaddleTop && intersectionY <= playerPaddleBottom) {
+            nextBall.x = playerCollisionPlaneX;
+            const intersectYRatio = (playerY - intersectionY) / (PADDLE_HEIGHT / 2);
+            const newVy = -intersectYRatio * PADDLE_BOUNCE_VY_MULTIPLIER;
+            nextBallSpeed.vx = -nextBallSpeed.vx * 1.05;
+            nextBallSpeed.vy = newVy;
+            playPaddleHit();
+          }
         }
       }
 
       // Computer paddle
+      const computerCollisionPlaneX = GAME_WIDTH - PADDLE_WIDTH * 3 - BALL_RADIUS;
       if (
-        nextBallSpeed.vx > 0 &&
-        nextBall.x + BALL_RADIUS >= GAME_WIDTH - PADDLE_WIDTH * 3 &&
-        ball.x + BALL_RADIUS < GAME_WIDTH - PADDLE_WIDTH * 3
+        nextBallSpeed.vx > 0 && // Moving right
+        nextBall.x >= computerCollisionPlaneX && // Has crossed or is on the plane
+        ball.x < computerCollisionPlaneX // Was previously to the left of the plane
       ) {
-        if (nextBall.y > computerPaddleTop && nextBall.y < computerPaddleBottom) {
-           nextBall.x = GAME_WIDTH - PADDLE_WIDTH * 3 - BALL_RADIUS;
-           nextBallSpeed.vx = -nextBallSpeed.vx;
-           playPaddleHit();
+        const dx = nextBall.x - ball.x;
+        if (dx !== 0) {
+          const dy = nextBall.y - ball.y;
+          const t = (computerCollisionPlaneX - ball.x) / dx;
+          const intersectionY = ball.y + dy * t;
+          if (intersectionY >= computerPaddleTop && intersectionY <= computerPaddleBottom) {
+            nextBall.x = computerCollisionPlaneX;
+            nextBallSpeed.vx = -nextBallSpeed.vx;
+            playPaddleHit();
+          }
         }
       }
 
