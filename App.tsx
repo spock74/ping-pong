@@ -544,6 +544,16 @@ const App: React.FC = () => {
       const dt = (timestamp - lastFrameTimeRef.current) / 1000; // Delta time in seconds
       lastFrameTimeRef.current = timestamp;
 
+      // DEFINITIVE CRASH FIX: This is the final safeguard.
+      // The onResults callback sets targetPlayerYRef.current. This animation loop
+      // consumes it. If onResults produces a NaN for even one frame, and this
+      // loop runs before it's corrected, the setPlayerY call will crash React.
+      // This check ensures that an invalid value is NEVER passed to the state setter.
+      if (!Number.isFinite(targetPlayerYRef.current)) {
+          animationFrameId = requestAnimationFrame(smoothPaddleMovement);
+          return; // Skip this frame's update entirely.
+      }
+
       setPlayerY(prevY => {
         const targetY = targetPlayerYRef.current;
         const diff = targetY - prevY;
