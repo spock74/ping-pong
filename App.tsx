@@ -186,7 +186,7 @@ const detectGesture = (landmarks: any[]): HandGesture => {
 };
 // --- End Gesture Detection ---
 
-type CalibrationStep = 'start' | 'point_up' | 'point_down' | 'finished';
+type CalibrationStep = 'idle' | 'setting_top' | 'setting_bottom' | 'finished';
 
 const App: React.FC = () => {
   const [gameStatus, setGameStatus] = useState<GameStatus>('idle');
@@ -210,15 +210,17 @@ const App: React.FC = () => {
   });
   const aiMessageTimeoutRef = useRef<number | null>(null);
   
-  // --- NEW: Calibration Preview State ---
-  const [calibrationStep, setCalibrationStep] = useState<CalibrationStep>('start');
+  // --- NEW: Refactored Calibration State ---
+  const [calibrationStep, setCalibrationStep] = useState<CalibrationStep>('idle');
   const [calibrationRange, setCalibrationRange] = useState({ min: 1, max: 0 });
   const [showCalibrationSuccess, setShowCalibrationSuccess] = useState(false);
-  const [calibrationFeedback, setCalibrationFeedback] = useState<{x: number, y: number} | null>(null);
-  const [calibrationPaddleY, setCalibrationPaddleY] = useState<number | null>(null);
+  const [calibrationHoldProgress, setCalibrationHoldProgress] = useState(0);
+  const [calibrationPaddleY, setCalibrationPaddleY] = useState<number>(GAME_HEIGHT / 2);
+  const [lockedBoundaries, setLockedBoundaries] = useState<{top: number | null, bottom: number | null}>({ top: null, bottom: null });
+
   const [debugInfo, setDebugInfo] = useState<Record<string, string | number>>({});
   const calibrationDataRef = useRef({ min: 1, max: 0 });
-  const calibrationLockRef = useRef(false);
+  const calibrationHoldStartRef = useRef<number | null>(null);
   // ---
 
   const gestureActionLockRef = useRef(false); // Cooldown for pause/reset gestures
@@ -295,11 +297,12 @@ const App: React.FC = () => {
 
   const startCalibrationSequence = useCallback(() => {
     setGameStatus('calibrating');
-    calibrationDataRef.current = { min: 1, max: 0 }; // Reset for new capture
-    calibrationLockRef.current = false;
-    setCalibrationFeedback(null);
-    setCalibrationPaddleY(GAME_HEIGHT / 2); // Start preview paddle in the middle
-    setCalibrationStep('point_up');
+    calibrationDataRef.current = { min: 1, max: 0 };
+    setCalibrationPaddleY(GAME_HEIGHT / 2);
+    setCalibrationHoldProgress(0);
+    setLockedBoundaries({ top: null, bottom: null });
+    calibrationHoldStartRef.current = null;
+    setCalibrationStep('setting_top');
   }, []);
 
   const handleFullReset = useCallback(() => {
@@ -314,18 +317,15 @@ const App: React.FC = () => {
   }, []);
 
   const onResults = useCallback((results: any) => {
-    // Draw hand landmarks on the canvas first, regardless of hand detection
     const canvasElement = landmarkCanvasRef.current;
     const canvasCtx = canvasElement?.getContext('2d');
     if (canvasCtx && canvasElement && results.image) {
         canvasElement.width = results.image.width;
         canvasElement.height = results.image.height;
-        
         canvasCtx.save();
         canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.fillStyle = 'black';
         canvasCtx.fillRect(0, 0, canvasElement.width, canvasElement.height);
-
         if (results.multiHandLandmarks) {
             for (const landmarks of results.multiHandLandmarks) {
                 window.drawConnectors(canvasCtx, landmarks, window.HAND_CONNECTIONS, { color: '#00FF00', lineWidth: 5 });
@@ -337,142 +337,125 @@ const App: React.FC = () => {
 
     const handIsCurrentlyVisible = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
 
-    // Handle game logic that requires a visible hand
     if (handIsCurrentlyVisible) {
       const handLandmarks = results.multiHandLandmarks[0];
       const gesture = detectGesture(handLandmarks);
       setCurrentGesture(gesture);
       
-      const controlPoint = handLandmarks[9]; // Use MIDDLE_FINGER_MCP as the stable control point
-
-      if (!isLandmarkVisible(controlPoint)) {
-        return;
-      }
+      const controlPoint = handLandmarks[9];
+      if (!isLandmarkVisible(controlPoint)) return;
       
-      // --- New WYSIWYG Calibration Logic ---
-      if (gameStatusRef.current === 'calibrating' && gesture === 'fist') {
-          const aimPoint = handLandmarks[9];
-          if (!isLandmarkVisible(aimPoint)) {
+      if (gameStatusRef.current === 'calibrating') {
+          const paddleY = controlPoint.y * GAME_HEIGHT;
+
+          // --- DEFINITIVE CRASH FIX for Calibration ---
+          // Validate the calculated paddle position before setting the state.
+          if (!Number.isFinite(paddleY)) {
+              // If the value is invalid (NaN/Infinity), do not update the state.
+              // This prevents the component from crashing when hand tracking is lost at the edge.
               return;
           }
-          
-          // Define target areas (normalized coordinates) - Centered and more ergonomic
-          const TARGET_RADIUS = 0.05;
-          const TARGET_TOP =    { x: 0.5, y: 0.10 };
-          const TARGET_BOTTOM = { x: 0.5, y: 0.80 };
+          setCalibrationPaddleY(paddleY);
 
-          if (calibrationStepRef.current === 'point_up' && !calibrationLockRef.current) {
-              // Provide direct 1:1 feedback by moving the preview paddle
-              setCalibrationPaddleY(aimPoint.y * GAME_HEIGHT);
+          const CALIBRATION_HOLD_TIME = 1500; // 1.5 seconds
 
-              const distance = Math.hypot(aimPoint.x - TARGET_TOP.x, aimPoint.y - TARGET_TOP.y);
-              if (distance < TARGET_RADIUS) {
-                  calibrationLockRef.current = true;
-                  calibrationDataRef.current.min = aimPoint.y;
-                  console.log(`Calibrated TOP boundary at: ${aimPoint.y}`);
-                  setCalibrationFeedback(TARGET_TOP); // Trigger visual feedback
-                  setCalibrationPaddleY(PADDLE_HEIGHT / 2); // SNAP paddle to top edge
-                  setTimeout(() => {
-                      setCalibrationStep('point_down');
-                      setCalibrationFeedback(null);
-                      calibrationLockRef.current = false;
-                  }, 1000); // Wait 1s for feedback animation
+          if (calibrationStepRef.current === 'setting_top') {
+              const paddleTopEdge = paddleY - PADDLE_HEIGHT / 2;
+              if (paddleTopEdge <= 5) { // Check if paddle is at the top edge
+                  if (!calibrationHoldStartRef.current) {
+                      calibrationHoldStartRef.current = performance.now();
+                  } else {
+                      const elapsed = performance.now() - calibrationHoldStartRef.current;
+                      const progress = Math.min(elapsed / CALIBRATION_HOLD_TIME, 1);
+                      setCalibrationHoldProgress(progress);
+
+                      if (elapsed >= CALIBRATION_HOLD_TIME) {
+                          calibrationDataRef.current.min = controlPoint.y;
+                          console.log(`Locked TOP at ${controlPoint.y}`);
+                          setCalibrationStep('setting_bottom');
+                          calibrationHoldStartRef.current = null;
+                          setCalibrationHoldProgress(0);
+                          setLockedBoundaries(prev => ({ ...prev, top: PADDLE_HEIGHT / 2 }));
+                      }
+                  }
+              } else {
+                  calibrationHoldStartRef.current = null;
+                  setCalibrationHoldProgress(0);
               }
-          } else if (calibrationStepRef.current === 'point_down' && !calibrationLockRef.current) {
-              // Provide direct 1:1 feedback by moving the preview paddle
-              setCalibrationPaddleY(aimPoint.y * GAME_HEIGHT);
+          } else if (calibrationStepRef.current === 'setting_bottom') {
+              const paddleBottomEdge = paddleY + PADDLE_HEIGHT / 2;
+              if (paddleBottomEdge >= GAME_HEIGHT - 5) { // Check if paddle is at bottom edge
+                  if (!calibrationHoldStartRef.current) {
+                      calibrationHoldStartRef.current = performance.now();
+                  } else {
+                      const elapsed = performance.now() - calibrationHoldStartRef.current;
+                      const progress = Math.min(elapsed / CALIBRATION_HOLD_TIME, 1);
+                      setCalibrationHoldProgress(progress);
 
-              const distance = Math.hypot(aimPoint.x - TARGET_BOTTOM.x, aimPoint.y - TARGET_BOTTOM.y);
-              if (distance < TARGET_RADIUS) {
-                  calibrationLockRef.current = true;
-                  calibrationDataRef.current.max = aimPoint.y;
-                  console.log(`Calibrated BOTTOM boundary at: ${aimPoint.y}`);
-                  setCalibrationFeedback(TARGET_BOTTOM); // Trigger feedback
-                  setCalibrationPaddleY(GAME_HEIGHT - PADDLE_HEIGHT / 2); // SNAP paddle to bottom edge
-                  setTimeout(() => {
-                      setCalibrationStep('finished');
-                      setCalibrationFeedback(null);
-                      calibrationLockRef.current = false;
-                  }, 1000); // Wait 1s
+                      if (elapsed >= CALIBRATION_HOLD_TIME) {
+                          calibrationDataRef.current.max = controlPoint.y;
+                          console.log(`Locked BOTTOM at ${controlPoint.y}`);
+                          setCalibrationStep('finished');
+                          calibrationHoldStartRef.current = null;
+                          setCalibrationHoldProgress(0);
+                          setLockedBoundaries(prev => ({ ...prev, bottom: GAME_HEIGHT - PADDLE_HEIGHT / 2 }));
+                      }
+                  }
+              } else {
+                  calibrationHoldStartRef.current = null;
+                  setCalibrationHoldProgress(0);
               }
           }
       }
 
-      // --- Handle Game State Gestures (Pause/Reset/Start/Calibrate) with cooldown ---
       if (!gestureActionLockRef.current) {
           if (gesture === 'victory' && gameStatusRef.current === 'idle') {
               startCalibrationSequence();
               gestureActionLockRef.current = true;
-              setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown
+              setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
           } else if (gesture === 'spread') {
-              if (gameStatusRef.current === 'running') {
-                  setGameStatus('paused');
-                  gestureActionLockRef.current = true;
-                  setTimeout(() => { gestureActionLockRef.current = false; }, 1000); // 1s cooldown
-              } else if (gameStatusRef.current === 'paused') {
-                  setGameStatus('running');
+              if (gameStatusRef.current === 'running') setGameStatus('paused');
+              else if (gameStatusRef.current === 'paused') setGameStatus('running');
+              if (['running', 'paused'].includes(gameStatusRef.current)) {
                   gestureActionLockRef.current = true;
                   setTimeout(() => { gestureActionLockRef.current = false; }, 1000);
               }
           } else if (gesture === 'thumbs_down') {
               handleFullReset();
               gestureActionLockRef.current = true;
-              setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown after reset
+              setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
           } else if (gesture === 'thumbs_up' && gameStatusRef.current === 'idle') {
               startGame();
               gestureActionLockRef.current = true;
-              setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown
+              setTimeout(() => { gestureActionLockRef.current = false; }, 2000);
           }
       }
       
-      // --- Handle Paddle Movement Gesture (Only when running) ---
       if (gameStatusRef.current === 'running' && gesture === 'fist') {
         const calibrationSpan = calibrationRangeRef.current.max - calibrationRangeRef.current.min;
-        
-        // **DEFINITIVE CRASH FIX**: Proactively check if calibration is valid before using it.
-        // A span that is too small (e.g., from a failed calibration) will cause division by zero -> NaN -> crash.
         const isCalibrationValid = calibrationSpan > 0.1;
 
         if (isCalibrationValid) {
             let normalizedY = (controlPoint.y - calibrationRangeRef.current.min) / calibrationSpan;
-
-            // This check is a secondary defense against any unexpected values from MediaPipe
             if (!Number.isFinite(normalizedY)) {
-                setDebugInfo({
-                    error: `Invalid normY: ${String(normalizedY)}`,
-                    rawY: controlPoint.y.toFixed(4),
-                    calibMin: calibrationRangeRef.current.min.toFixed(4),
-                    calibMax: calibrationRangeRef.current.max.toFixed(4),
-                });
-                return; // PREVENT CRASH by skipping this frame's paddle update
+                setDebugInfo({ error: `Invalid normY: ${String(normalizedY)}`, rawY: controlPoint.y.toFixed(4) });
+                return;
             }
-            
             const clampedNormalizedY = Math.max(0, Math.min(1, normalizedY));
             const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
             const minPaddleY = PADDLE_HEIGHT / 2;
             const newY = (clampedNormalizedY * paddleTravelRange) + minPaddleY;
             targetPlayerYRef.current = newY;
-            
-            setDebugInfo({
-                status: 'Calibrated',
-                rawY: controlPoint.y.toFixed(3),
-                normY: normalizedY.toFixed(3),
-                finalY: newY.toFixed(3),
-            });
-
+            setDebugInfo({ status: 'Calibrated', rawY: controlPoint.y.toFixed(3), normY: normalizedY.toFixed(3), finalY: newY.toFixed(3) });
         } else {
-            // --- Bulletproof Fallback Logic (if no valid calibration exists) ---
             const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
             const unmappedY = controlPoint.y * paddleTravelRange;
-            if (!Number.isFinite(unmappedY)) { return; } // Safety check
-
+            if (!Number.isFinite(unmappedY)) return;
             const newY = unmappedY + (PADDLE_HEIGHT / 2);
             const minPaddleY = PADDLE_HEIGHT / 2;
             const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
             const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
-            
-            if (!Number.isFinite(clampedY)) { return; } // Final safety check
-            
+            if (!Number.isFinite(clampedY)) return;
             targetPlayerYRef.current = clampedY;
             setDebugInfo({ status: 'No calibration', rawY: controlPoint.y.toFixed(3), finalY: clampedY.toFixed(3) });
         }
@@ -487,21 +470,8 @@ const App: React.FC = () => {
       console.error("MediaPipe Hands not loaded!");
       return;
     }
-
-    const hands = new window.Hands({
-      locateFile: (file: string) => {
-        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-      },
-    });
-
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.5,
-      minTrackingConfidence: 0.5,
-      selfieMode: true,
-    });
-
+    const hands = new window.Hands({ locateFile: (file: string) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+    hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5, selfieMode: true });
     hands.onResults(onResults);
     handsRef.current = hands;
 
@@ -509,11 +479,8 @@ const App: React.FC = () => {
         const camera = new window.Camera(videoRef.current, {
             onFrame: async () => {
                 if (videoRef.current && handsRef.current) {
-                    try {
-                        await handsRef.current.send({ image: videoRef.current });
-                    } catch (error) {
-                        console.error("Error sending image to MediaPipe Hands:", error);
-                    }
+                    try { await handsRef.current.send({ image: videoRef.current }); }
+                    catch (error) { console.error("Error sending image to MediaPipe Hands:", error); }
                 }
             },
             width: 1280,
@@ -523,164 +490,92 @@ const App: React.FC = () => {
             camera.start();
             setWebcamReady(true);
         } catch (error) {
-            console.error("Failed to start camera. Please ensure permissions are granted and no other application is using the camera.", error);
+            console.error("Failed to start camera.", error);
             setWebcamReady(false);
         }
     }
-
-    return () => {
-        if(handsRef.current) {
-            handsRef.current.close();
-            handsRef.current = null;
-        }
-    }
+    return () => { if (handsRef.current) { handsRef.current.close(); handsRef.current = null; } }
   }, [onResults]);
   
-  // Frame-rate independent paddle smoothing
   useEffect(() => {
     let animationFrameId: number;
-    
     const smoothPaddleMovement = (timestamp: number) => {
-      const dt = (timestamp - lastFrameTimeRef.current) / 1000; // Delta time in seconds
+      const dt = (timestamp - lastFrameTimeRef.current) / 1000;
       lastFrameTimeRef.current = timestamp;
-
       const targetY = targetPlayerYRef.current;
-      
-      // Add logging to trace values just before the check
-      setDebugInfo(prev => ({
-        ...prev,
-        anim_target: typeof targetY === 'number' ? targetY.toFixed(3) : String(targetY),
-      }));
-
-      // The final, robust safety check is now inside the state updater
+      setDebugInfo(prev => ({ ...prev, anim_target: typeof targetY === 'number' ? targetY.toFixed(3) : String(targetY) }));
       setPlayerY(prevY => {
-        // If the target value from gesture detection is invalid, ignore it for this frame.
-        if (!Number.isFinite(targetY)) {
-          return prevY;
-        }
-        
+        if (!Number.isFinite(targetY)) return prevY;
         const diff = targetY - prevY;
-        if (Math.abs(diff) < 0.5) {
-          return targetY; // targetY is known to be a finite number here.
-        }
-
+        if (Math.abs(diff) < 0.5) return targetY;
         const adjustedSmoothing = PADDLE_SMOOTHING_FACTOR * dt * 60;
         const newY = prevY + diff * Math.min(adjustedSmoothing, 1);
-        
-        // Final validation on the calculated smoothed value.
-        if (Number.isFinite(newY)) {
-          return newY;
-        }
-
-        return prevY; // Return the last known good state.
+        if (Number.isFinite(newY)) return newY;
+        return prevY;
       });
-      
       animationFrameId = requestAnimationFrame(smoothPaddleMovement);
     };
-
     if (gameStatus === 'running' || gameStatus === 'paused') {
-        lastFrameTimeRef.current = performance.now(); // Reset timer when starting
+        lastFrameTimeRef.current = performance.now();
         animationFrameId = requestAnimationFrame(smoothPaddleMovement);
     } else {
       targetPlayerYRef.current = GAME_HEIGHT / 2;
       setPlayerY(GAME_HEIGHT / 2);
     }
-
-    return () => {
-      cancelAnimationFrame(animationFrameId);
-    };
+    return () => cancelAnimationFrame(animationFrameId);
   }, [gameStatus]);
 
-
-  const restartGame = () => {
-    setGameStatus('idle');
-  };
+  const restartGame = () => setGameStatus('idle');
 
   const handleGameOver = useCallback((winner: 'player' | 'computer') => {
-    setPersistentScore(prevScore => ({
-      ...prevScore,
-      [winner]: prevScore[winner] + 1,
-    }));
+    setPersistentScore(prevScore => ({ ...prevScore, [winner]: prevScore[winner] + 1 }));
   }, []);
 
   const handlePointScored = useCallback((scorer: 'player' | 'computer') => {
-    if (aiMessageTimeoutRef.current) {
-        clearTimeout(aiMessageTimeoutRef.current);
-    }
-    setAiMessage(null); // Clear previous message immediately
-    
-    // Tiny delay to allow React to clear state before setting a new one, ensuring animations restart.
+    if (aiMessageTimeoutRef.current) clearTimeout(aiMessageTimeoutRef.current);
+    setAiMessage(null);
     setTimeout(() => {
-        let message = '';
-        if (scorer === 'computer') {
-            const randomIndex = Math.floor(Math.random() * taunts.length);
-            message = taunts[randomIndex];
-        } else {
-            const randomIndex = Math.floor(Math.random() * praises.length);
-            message = praises[randomIndex];
-        }
+        const messageList = scorer === 'computer' ? taunts : praises;
+        const message = messageList[Math.floor(Math.random() * messageList.length)];
         setAiMessage(message);
-
-        aiMessageTimeoutRef.current = window.setTimeout(() => {
-            setAiMessage(null);
-            aiMessageTimeoutRef.current = null;
-        }, 4000);
+        aiMessageTimeoutRef.current = window.setTimeout(() => setAiMessage(null), 4000);
     }, 50);
   }, [praises, taunts]);
 
-  // Clean up timeout on unmount
   useEffect(() => {
-    return () => {
-      if (aiMessageTimeoutRef.current) {
-        clearTimeout(aiMessageTimeoutRef.current);
-      }
-    };
+    return () => { if (aiMessageTimeoutRef.current) clearTimeout(aiMessageTimeoutRef.current); };
   }, []);
 
   useEffect(() => {
     if (calibrationStep === 'finished') {
-        setGameStatus('idle');
-        setCalibrationStep('start'); // Reset for next time
-        setCalibrationPaddleY(null); // Hide preview paddle
-
+        setCalibrationStep('idle');
         const capturedRange = calibrationDataRef.current;
-        
         const newMin = Math.min(capturedRange.min, capturedRange.max);
         const newMax = Math.max(capturedRange.min, capturedRange.max);
         const finalRange = { min: newMin, max: newMax };
-
-        // Check if a valid range was captured
         if (finalRange.max > 0 && (finalRange.max - finalRange.min > 0.1)) {
             setCalibrationRange(finalRange);
-            
             setShowCalibrationSuccess(true);
             setTimeout(() => setShowCalibrationSuccess(false), 4000);
             console.log("Calibration successful. New range:", finalRange);
         } else {
-            console.warn("Calibration failed: insufficient or invalid movement detected.", capturedRange);
+            console.warn("Calibration failed: insufficient movement.", capturedRange);
         }
+        setTimeout(() => setGameStatus('idle'), 500); // Transition back to idle after a short delay
     }
   }, [calibrationStep]);
-
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white font-mono p-4 relative">
       {apiError && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-red-900/90 border-2 border-red-600 text-white px-4 py-2 rounded-lg shadow-lg z-50 flex items-center space-x-3 animate-simpleFadeIn max-w-lg text-center">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-red-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-            </svg>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-red-300 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
             <span className="text-sm">{apiError}</span>
             <button onClick={() => setApiError(null)} className="text-red-300 hover:text-white text-2xl leading-none flex-shrink-0">&times;</button>
         </div>
       )}
-      <h1 className="text-5xl font-bold text-lime-400 mb-2 tracking-widest" style={{ textShadow: '0 0 10px #0f0' }}>
-        PONG por Gestos
-      </h1>
-      <p className="text-green-400 mb-4" style={{ textShadow: '0 0 5px #0f0' }}>
-        Controle a raquete com a sua mão!
-      </p>
-
+      <h1 className="text-5xl font-bold text-lime-400 mb-2 tracking-widest" style={{ textShadow: '0 0 10px #0f0' }}>PONG por Gestos</h1>
+      <p className="text-green-400 mb-4" style={{ textShadow: '0 0 5px #0f0' }}>Controle a raquete com a sua mão!</p>
       <div className="mb-4 text-center">
         <h2 className="text-xl text-gray-400 uppercase tracking-wider">Placar Geral</h2>
         <div className="flex justify-around w-full max-w-sm text-2xl mt-2 p-2 border-2 border-gray-700 rounded-lg bg-gray-900/50">
@@ -694,7 +589,6 @@ const App: React.FC = () => {
           </div>
         </div>
       </div>
-
       <div className="relative w-full max-w-4xl aspect-[16/9] bg-gray-900 border-4 border-lime-400 shadow-[0_0_20px_#0f0] rounded-lg overflow-hidden">
         {gameStatus !== 'running' && gameStatus !== 'calibrating' && (
           <InstructionOverlay
@@ -717,27 +611,19 @@ const App: React.FC = () => {
             difficulty={difficulty}
             onPointScored={handlePointScored}
             calibrationStep={gameStatus === 'calibrating' ? calibrationStep : null}
-            calibrationFeedback={calibrationFeedback}
             calibrationPaddleY={calibrationPaddleY}
+            calibrationHoldProgress={calibrationHoldProgress}
+            lockedBoundaries={lockedBoundaries}
         />
          {aiMessage && (
-          <div 
-            key={aiMessage} // Use key to force re-render and restart animation
-            className="absolute inset-0 flex items-center justify-center pointer-events-none z-20 animate-fadeInOut"
-          >
-            <p 
-              className="text-4xl font-bold text-yellow-300 text-center px-4" 
-              style={{ textShadow: '0 0 10px #ff0, 0 0 20px #f90' }}
-            >
+          <div key={aiMessage} className="absolute inset-0 flex items-center justify-center pointer-events-none z-20 animate-fadeInOut">
+            <p className="text-4xl font-bold text-yellow-300 text-center px-4" style={{ textShadow: '0 0 10px #ff0, 0 0 20px #f90' }}>
               {aiMessage}
             </p>
           </div>
         )}
       </div>
-
       <p className="mt-4 text-sm text-gray-400">Desenvolvido com React, MediaPipe, Tailwind CSS e ❤️ por Zehn & Gemini 2.5-flash</p>
-      
-      {/* Webcam and Landmark visualization container */}
       <div className="absolute top-4 right-4 flex flex-col items-end space-y-2">
          <div className="bg-black/50 text-lime-400 text-sm font-semibold px-3 py-1.5 rounded-md border border-lime-800 shadow-lg text-center">
             Gesto: <span className="text-white font-bold tracking-wider w-20 inline-block">{currentGesture === 'unknown' ? 'N/D' : currentGesture.toUpperCase()}</span>
@@ -752,21 +638,11 @@ const App: React.FC = () => {
                 {showLandmarks ? "Ver Cam" : "Ver Detecção"}
             </button>
             <div className="w-24 h-auto border-2 border-lime-500 rounded-md overflow-hidden opacity-50 hover:opacity-100 transition-opacity">
-                <video 
-                    ref={videoRef} 
-                    className="block w-full"
-                    style={{ transform: 'scaleX(-1)', display: showLandmarks ? 'none' : 'block' }} 
-                    playsInline 
-                />
-                <canvas 
-                    ref={landmarkCanvasRef} 
-                    className="block w-full bg-black" 
-                    style={{ transform: 'scaleX(-1)', display: showLandmarks ? 'block' : 'none' }}
-                />
+                <video ref={videoRef} className="block w-full" style={{ transform: 'scaleX(-1)', display: showLandmarks ? 'none' : 'block' }} playsInline />
+                <canvas ref={landmarkCanvasRef} className="block w-full bg-black" style={{ transform: 'scaleX(-1)', display: showLandmarks ? 'block' : 'none' }} />
             </div>
         </div>
       </div>
-       {/* On-screen Debug Logs */}
        <div className="absolute bottom-4 left-4 bg-black/70 text-white p-2 rounded-md font-mono text-xs z-50 border border-gray-700">
         <h4 className="font-bold text-lime-400 border-b border-gray-600 mb-1 pb-1">Debug Info</h4>
         {Object.entries(debugInfo).map(([key, value]) => (

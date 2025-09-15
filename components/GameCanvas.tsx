@@ -30,12 +30,13 @@ interface GameCanvasProps {
   onGameOver: (winner: 'player' | 'computer') => void;
   difficulty: Difficulty;
   onPointScored: (scorer: 'player' | 'computer') => void;
-  calibrationStep: 'start' | 'point_up' | 'point_down' | 'finished' | null;
-  calibrationFeedback: { x: number; y: number } | null;
-  calibrationPaddleY: number | null;
+  calibrationStep: 'idle' | 'setting_top' | 'setting_bottom' | 'finished' | null;
+  calibrationPaddleY: number;
+  calibrationHoldProgress: number;
+  lockedBoundaries: { top: number | null, bottom: number | null };
 }
 
-const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty, onPointScored, calibrationStep, calibrationFeedback, calibrationPaddleY }) => {
+const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty, onPointScored, calibrationStep, calibrationPaddleY, calibrationHoldProgress, lockedBoundaries }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameOverInitiated = useRef(false);
   const prevScoreRef = useRef({ player: 0, computer: 0 });
@@ -77,20 +78,14 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // --- NEW: Draw player or preview paddle ---
-    if (status === 'calibrating' && calibrationPaddleY !== null) {
-        // Draw a semi-transparent "ghost" paddle for direct feedback
-        ctx.fillStyle = 'rgba(0, 255, 0, 0.5)'; // Green with 50% opacity
-        ctx.shadowBlur = 10;
-        ctx.shadowColor = 'rgba(0, 255, 0, 0.5)';
-        ctx.fillRect(PADDLE_WIDTH * 2, calibrationPaddleY - PADDLE_HEIGHT / 2, PADDLE_WIDTH, PADDLE_HEIGHT);
-    } else {
-        // Draw the normal player paddle
-        ctx.fillStyle = '#00ff00';
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = '#00ff00';
-        ctx.fillRect(PADDLE_WIDTH * 2, playerY - PADDLE_HEIGHT / 2, PADDLE_WIDTH, PADDLE_HEIGHT);
-    }
+    // --- Paddle Drawing ---
+    const currentPaddleY = status === 'calibrating' ? calibrationPaddleY : playerY;
+    
+    // Draw player paddle
+    ctx.fillStyle = '#00ff00';
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = '#00ff00';
+    ctx.fillRect(PADDLE_WIDTH * 2, currentPaddleY - PADDLE_HEIGHT / 2, PADDLE_WIDTH, PADDLE_HEIGHT);
     
     ctx.fillStyle = '#ff0000'; // Computer paddle (red)
     ctx.shadowColor = '#ff0000';
@@ -115,9 +110,8 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
         ctx.fillText(score.computer.toString(), (GAME_WIDTH * 3) / 4, 70);
     }
 
-     // --- Draw Calibration UI ---
+    // --- NEW: Draw "Direct Manipulation" Calibration UI ---
     if (status === 'calibrating' && calibrationStep) {
-        // Draw instructions
         ctx.save();
         ctx.fillStyle = '#00ff00';
         ctx.shadowColor = '#00ff00';
@@ -125,63 +119,57 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
         ctx.font = '48px "Courier New", Courier, monospace';
         ctx.textAlign = 'center';
         let text = '';
-        if (calibrationStep === 'point_up') {
-            text = 'Mova a mão fechada ao alvo de CIMA ⬆️';
-        } else if (calibrationStep === 'point_down') {
-            text = 'Agora ao alvo de BAIXO ⬇️';
+        if (calibrationStep === 'setting_top') {
+            text = 'Toque na BORDA SUPERIOR com a raquete e SEGURE';
+        } else if (calibrationStep === 'setting_bottom') {
+            text = 'Ótimo! Agora toque na BORDA INFERIOR e SEGURE';
         }
         if (text) {
             ctx.fillText(text, GAME_WIDTH / 2, GAME_HEIGHT / 2);
         }
         ctx.restore();
 
-        const drawTarget = (x: number, y: number, color: string) => {
+        // Draw "hold-to-confirm" progress indicator
+        if (calibrationHoldProgress > 0) {
             ctx.save();
-            ctx.strokeStyle = color;
-            ctx.lineWidth = 3;
-            ctx.shadowBlur = 15;
-            ctx.shadowColor = color;
-            // Draw a reticle
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 8;
+            ctx.shadowBlur = 10;
+            ctx.shadowColor = '#ffff00';
             ctx.beginPath();
-            ctx.arc(x, y, 30, 0, Math.PI * 2);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(x - 40, y);
-            ctx.lineTo(x + 40, y);
-            ctx.stroke();
-            ctx.beginPath();
-            ctx.moveTo(x, y - 40);
-            ctx.lineTo(x, y + 40);
+            ctx.arc(
+                PADDLE_WIDTH * 2.5,
+                currentPaddleY,
+                PADDLE_HEIGHT / 2.5,
+                -Math.PI / 2,
+                -Math.PI / 2 + (Math.PI * 2 * calibrationHoldProgress)
+            );
             ctx.stroke();
             ctx.restore();
         }
 
-        // UPDATED: Centered and more ergonomic targets
-        if (calibrationStep === 'point_up') {
-            drawTarget(GAME_WIDTH * 0.5, GAME_HEIGHT * 0.10, '#00ff00');
-        } else if (calibrationStep === 'point_down') {
-            drawTarget(GAME_WIDTH * 0.5, GAME_HEIGHT * 0.80, '#00ff00');
-        }
-    }
-
-    // Draw feedback glow
-    if (calibrationFeedback) {
-        const { x, y } = calibrationFeedback;
-        const canvasX = x * GAME_WIDTH;
-        const canvasY = y * GAME_HEIGHT;
-        
+        // Draw locked boundary confirmations
         ctx.save();
-        const gradient = ctx.createRadialGradient(canvasX, canvasY, 10, canvasX, canvasY, 80);
-        gradient.addColorStop(0, 'rgba(255, 255, 0, 0.8)');
-        gradient.addColorStop(1, 'rgba(255, 255, 0, 0)');
-        ctx.fillStyle = gradient;
-        ctx.beginPath();
-        ctx.arc(canvasX, canvasY, 80, 0, Math.PI * 2);
-        ctx.fill();
+        ctx.strokeStyle = '#00ff00';
+        ctx.lineWidth = 4;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#00ff00';
+        if (lockedBoundaries.top !== null) {
+            ctx.beginPath();
+            ctx.moveTo(0, 2);
+            ctx.lineTo(GAME_WIDTH, 2);
+            ctx.stroke();
+        }
+        if (lockedBoundaries.bottom !== null) {
+            ctx.beginPath();
+            ctx.moveTo(0, GAME_HEIGHT - 2);
+            ctx.lineTo(GAME_WIDTH, GAME_HEIGHT - 2);
+            ctx.stroke();
+        }
         ctx.restore();
     }
 
-  }, [playerY, ball, computerY, score, status, calibrationStep, calibrationFeedback, calibrationPaddleY]);
+  }, [playerY, ball, computerY, score, status, calibrationStep, calibrationPaddleY, calibrationHoldProgress, lockedBoundaries]);
 
   useEffect(() => {
     if (status !== 'running') return;
@@ -406,7 +394,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
             }
         }
     }
-  }, [status, draw, calibrationStep, calibrationFeedback, calibrationPaddleY]);
+  }, [status, draw, calibrationStep, calibrationPaddleY, calibrationHoldProgress, lockedBoundaries]);
 
 
   return (
