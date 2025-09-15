@@ -194,9 +194,9 @@ const App: React.FC = () => {
   const [calibrationHistory, setCalibrationHistory] = useState<{min: number, max: number}[]>([]);
   const [showCalibrationSuccess, setShowCalibrationSuccess] = useState(false);
   const calibrationDataRef = useRef({ min: 1, max: 0 });
+  const calibrationCaptureRef = useRef({ transientMin: 1, transientMax: 0 }); // For robust calibration
   const gestureActionLockRef = useRef(false); // Cooldown for pause/reset gestures
   const lastHandPositionRef = useRef<number | null>(null);
-  const lastValidCalibPositionRef = useRef<number | null>(null); // For gesture-gated calibration
   const handVisibleRef = useRef<boolean>(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -340,12 +340,19 @@ const App: React.FC = () => {
       const gesture = detectGesture(handLandmarks);
       setCurrentGesture(gesture);
       
-      // During calibration, only track hand position if the gesture is a fist
-      if (gameStatusRef.current === 'calibrating' && gesture === 'fist') {
-          lastValidCalibPositionRef.current = handLandmarks[0].y;
+      const currentY = handLandmarks[0].y;
+      lastHandPositionRef.current = currentY; 
+
+      // --- New Calibration Capture Logic ---
+      // Continuously track the most extreme position of the wrist during calibration,
+      // regardless of the gesture, for a more accurate edge detection.
+      if (gameStatusRef.current === 'calibrating') {
+          if (calibrationStepRef.current === 'up') {
+              calibrationCaptureRef.current.transientMin = Math.min(calibrationCaptureRef.current.transientMin, currentY);
+          } else if (calibrationStepRef.current === 'down') {
+              calibrationCaptureRef.current.transientMax = Math.max(calibrationCaptureRef.current.transientMax, currentY);
+          }
       }
-      
-      lastHandPositionRef.current = handLandmarks[0].y; // Update last known position for general use
 
       // --- Handle Game State Gestures (Pause/Reset/Start) with cooldown ---
       if (!gestureActionLockRef.current) {
@@ -374,42 +381,34 @@ const App: React.FC = () => {
       if (gesture === gestureTypeRef.current) {
         const wrist = handLandmarks[0];
         if (wrist) {
-          const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
           const calibrationSpan = calibrationRangeRef.current.max - calibrationRangeRef.current.min;
           let newY: number;
 
           if (calibrationSpan > 0.1) { // A valid calibration exists
-              // Expand the calibrated range and apply a scaling factor for more responsive control.
-              // This creates a "buffer" at the edges, requiring the user to move past their
-              // calibrated points to reach the screen's absolute top or bottom.
-              // The scaling factor makes the paddle move a larger distance on screen than the hand does.
-              const CALIBRATION_EXPANSION_NORMALIZED = PADDLE_HEIGHT / GAME_HEIGHT; // ~0.167
-              const PADDLE_MOVEMENT_SCALING_FACTOR = 1.2; // Paddle moves 20% more than hand
+              // --- New robust mapping logic ---
+              // 1. Normalize hand position relative to the calibrated range.
+              let normalizedY = (wrist.y - calibrationRangeRef.current.min) / calibrationSpan;
 
-              const expandedMin = calibrationRangeRef.current.min - CALIBRATION_EXPANSION_NORMALIZED;
-              const expandedMax = calibrationRangeRef.current.max + CALIBRATION_EXPANSION_NORMALIZED;
-              const expandedSpan = expandedMax - expandedMin;
+              // 2. Clamp the normalized value between 0 and 1.
+              // This ensures moving your hand past the calibrated points keeps the paddle at the edge.
+              normalizedY = Math.max(0, Math.min(1, normalizedY));
 
-              // Normalize the hand's position within the new expanded range
-              let normalizedY = (wrist.y - expandedMin) / expandedSpan;
+              // 3. Map the normalized value to the paddle's full on-screen travel range.
+              const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
+              const minPaddleY = PADDLE_HEIGHT / 2;
+              newY = (normalizedY * paddleTravelRange) + minPaddleY;
 
-              // Apply the scaling factor, pivoting around the center (0.5)
-              normalizedY = 0.5 + (normalizedY - 0.5) * PADDLE_MOVEMENT_SCALING_FACTOR;
-
-              // Map the final normalized value to the paddle's on-screen travel range
-              newY = (normalizedY * paddleTravelRange) + (PADDLE_HEIGHT / 2);
           } else {
               // Fallback to default full-range mapping if no valid calibration.
+              const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
               newY = (wrist.y * paddleTravelRange) + (PADDLE_HEIGHT / 2);
           }
 
-          // Final clamp to ensure the paddle never goes off-screen, which is crucial
-          // especially after scaling the movement.
+          // Final clamp for the fallback case, and as a safety net.
           const minPaddleY = PADDLE_HEIGHT / 2;
           const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
           const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
-
-          // Update target position for smoothing
+          
           targetPlayerYRef.current = clampedY;
         }
       }
@@ -419,26 +418,24 @@ const App: React.FC = () => {
 
     // --- New Calibration State Machine ---
     if (gameStatusRef.current === 'calibrating') {
-      // Step 1: Hand was visible and is now not visible (moved off screen)
+      // Trigger state change when hand disappears from view
       if (handWasPreviouslyVisible && !handIsCurrentlyVisible) {
-        const lastValidY = lastValidCalibPositionRef.current; // Use the gesture-gated position
         
         // Check for finishing the 'up' step
-        if (calibrationStepRef.current === 'up' && lastValidY !== null && lastValidY < 0.5) {
-          calibrationDataRef.current.min = lastValidY;
-          console.log(`Calibrated TOP boundary at: ${lastValidY}`);
+        if (calibrationStepRef.current === 'up') {
+          // Capture the most extreme point, not the last seen point.
+          calibrationDataRef.current.min = calibrationCaptureRef.current.transientMin;
+          console.log(`Calibrated TOP boundary at: ${calibrationDataRef.current.min}`);
           setCalibrationStep('down');
         }
         
         // Check for finishing the 'down' step
-        else if (calibrationStepRef.current === 'down' && lastValidY !== null && lastValidY > 0.5) {
-          calibrationDataRef.current.max = lastValidY;
-          console.log(`Calibrated BOTTOM boundary at: ${lastValidY}`);
+        else if (calibrationStepRef.current === 'down') {
+          // Capture the most extreme point recorded during the downward movement.
+          calibrationDataRef.current.max = calibrationCaptureRef.current.transientMax;
+          console.log(`Calibrated BOTTOM boundary at: ${calibrationDataRef.current.max}`);
           setCalibrationStep('finished');
         }
-
-        // Reset the valid position ref after each capture attempt
-        lastValidCalibPositionRef.current = null;
       }
     }
   }, [handleFullReset, startGame]);
@@ -582,8 +579,8 @@ const App: React.FC = () => {
 
   const startCalibrationSequence = useCallback(() => {
     calibrationDataRef.current = { min: 1, max: 0 }; // Reset for new capture
+    calibrationCaptureRef.current = { transientMin: 1, transientMax: 0 }; // Reset transient capture
     lastHandPositionRef.current = null;
-    lastValidCalibPositionRef.current = null;
     handVisibleRef.current = false;
     setCalibrationStep('up');
   }, []);
