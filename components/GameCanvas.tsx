@@ -30,10 +30,10 @@ interface GameCanvasProps {
   onPointScored: (scorer: 'player' | 'computer') => void;
   calibrationStep: 'start' | 'point_up' | 'point_down' | 'finished' | null;
   calibrationFeedback: { x: number; y: number } | null;
-  pointerPosition: { x: number; y: number } | null;
+  calibrationPaddleY: number | null;
 }
 
-const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty, onPointScored, calibrationStep, calibrationFeedback, pointerPosition }) => {
+const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus, onGameOver, difficulty, onPointScored, calibrationStep, calibrationFeedback, calibrationPaddleY }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameOverInitiated = useRef(false);
   const prevScoreRef = useRef({ player: 0, computer: 0 });
@@ -74,30 +74,43 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Draw paddles
-    ctx.fillStyle = '#00ff00'; // Player paddle (green)
-    ctx.shadowBlur = 15;
-    ctx.shadowColor = '#00ff00';
-    ctx.fillRect(PADDLE_WIDTH * 2, playerY - PADDLE_HEIGHT / 2, PADDLE_WIDTH, PADDLE_HEIGHT);
+    // --- NEW: Draw player or preview paddle ---
+    if (status === 'calibrating' && calibrationPaddleY !== null) {
+        // Draw a semi-transparent "ghost" paddle for direct feedback
+        ctx.fillStyle = 'rgba(0, 255, 0, 0.5)'; // Green with 50% opacity
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = 'rgba(0, 255, 0, 0.5)';
+        ctx.fillRect(PADDLE_WIDTH * 2, calibrationPaddleY - PADDLE_HEIGHT / 2, PADDLE_WIDTH, PADDLE_HEIGHT);
+    } else {
+        // Draw the normal player paddle
+        ctx.fillStyle = '#00ff00';
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = '#00ff00';
+        ctx.fillRect(PADDLE_WIDTH * 2, playerY - PADDLE_HEIGHT / 2, PADDLE_WIDTH, PADDLE_HEIGHT);
+    }
     
     ctx.fillStyle = '#ff0000'; // Computer paddle (red)
     ctx.shadowColor = '#ff0000';
     ctx.fillRect(GAME_WIDTH - PADDLE_WIDTH * 3, computerY - PADDLE_HEIGHT / 2, PADDLE_WIDTH, PADDLE_HEIGHT);
     
-    // Draw ball
-    ctx.beginPath();
-    ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
-    ctx.fillStyle = 'white';
-    ctx.shadowColor = 'white';
-    ctx.fill();
+    // Draw ball (unless calibrating)
+    if (status !== 'calibrating') {
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.fillStyle = 'white';
+        ctx.shadowColor = 'white';
+        ctx.fill();
+    }
     ctx.shadowBlur = 0;
 
-    // Draw scores
-    ctx.font = '60px "Courier New", Courier, monospace';
-    ctx.fillStyle = '#00ff00';
-    ctx.fillText(score.player.toString(), GAME_WIDTH / 4, 70);
-    ctx.fillStyle = '#ff0000';
-    ctx.fillText(score.computer.toString(), (GAME_WIDTH * 3) / 4, 70);
+    // Draw scores (unless calibrating)
+    if (status !== 'calibrating') {
+        ctx.font = '60px "Courier New", Courier, monospace';
+        ctx.fillStyle = '#00ff00';
+        ctx.fillText(score.player.toString(), GAME_WIDTH / 4, 70);
+        ctx.fillStyle = '#ff0000';
+        ctx.fillText(score.computer.toString(), (GAME_WIDTH * 3) / 4, 70);
+    }
 
      // --- Draw Calibration UI ---
     if (status === 'calibrating' && calibrationStep) {
@@ -140,22 +153,11 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
             ctx.restore();
         }
 
+        // UPDATED: Centered and more ergonomic targets
         if (calibrationStep === 'point_up') {
-            drawTarget(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.10, '#00ff00');
+            drawTarget(GAME_WIDTH * 0.5, GAME_HEIGHT * 0.10, '#00ff00');
         } else if (calibrationStep === 'point_down') {
-            drawTarget(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.85, '#00ff00');
-        }
-        
-        // Draw pointer feedback dot
-        if (pointerPosition) {
-            ctx.save();
-            ctx.fillStyle = 'yellow';
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = 'yellow';
-            ctx.beginPath();
-            ctx.arc(pointerPosition.x * GAME_WIDTH, pointerPosition.y * GAME_HEIGHT, 10, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
+            drawTarget(GAME_WIDTH * 0.5, GAME_HEIGHT * 0.80, '#00ff00');
         }
     }
 
@@ -176,7 +178,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
         ctx.restore();
     }
 
-  }, [playerY, ball, computerY, score, status, calibrationStep, calibrationFeedback, pointerPosition]);
+  }, [playerY, ball, computerY, score, status, calibrationStep, calibrationFeedback, calibrationPaddleY]);
 
   useEffect(() => {
     if (status !== 'running') return;
@@ -188,9 +190,6 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
       lastTimeRef.current = timestamp;
 
       // CRITICAL STABILITY FIX: Clamp delta time to prevent physics glitches.
-      // If the tab is backgrounded, dt can become very large, causing the ball
-      // to teleport through paddles or cause other calculation errors.
-      // We cap it at a reasonable maximum, e.g., 50ms (20 FPS).
       dt = Math.max(0, Math.min(dt, 0.05));
       if (dt === 0) {
         animationFrameId = requestAnimationFrame(gameLoop);
@@ -378,7 +377,7 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
             }
         }
     }
-  }, [status, draw, calibrationStep, calibrationFeedback, pointerPosition]);
+  }, [status, draw, calibrationStep, calibrationFeedback, calibrationPaddleY]);
 
 
   return (

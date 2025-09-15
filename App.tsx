@@ -210,15 +210,17 @@ const App: React.FC = () => {
   });
   const aiMessageTimeoutRef = useRef<number | null>(null);
   
-  // Calibration State
+  // --- NEW: Calibration Preview State ---
   const [calibrationStep, setCalibrationStep] = useState<CalibrationStep>('start');
   const [calibrationRange, setCalibrationRange] = useState({ min: 1, max: 0 });
   const [showCalibrationSuccess, setShowCalibrationSuccess] = useState(false);
   const [calibrationFeedback, setCalibrationFeedback] = useState<{x: number, y: number} | null>(null);
-  const [pointerPosition, setPointerPosition] = useState<{x: number, y: number} | null>(null);
+  const [calibrationPaddleY, setCalibrationPaddleY] = useState<number | null>(null);
   const [debugInfo, setDebugInfo] = useState<Record<string, string | number>>({});
   const calibrationDataRef = useRef({ min: 1, max: 0 });
   const calibrationLockRef = useRef(false);
+  // ---
+
   const gestureActionLockRef = useRef(false); // Cooldown for pause/reset gestures
   const lastFrameTimeRef = useRef<number>(performance.now()); // For delta time calculation
 
@@ -296,6 +298,7 @@ const App: React.FC = () => {
     calibrationDataRef.current = { min: 1, max: 0 }; // Reset for new capture
     calibrationLockRef.current = false;
     setCalibrationFeedback(null);
+    setCalibrationPaddleY(GAME_HEIGHT / 2); // Start preview paddle in the middle
     setCalibrationStep('point_up');
   }, []);
 
@@ -342,41 +345,33 @@ const App: React.FC = () => {
       
       const controlPoint = handLandmarks[9]; // Use MIDDLE_FINGER_MCP as the stable control point
 
-      // --- CRITICAL STABILITY FIX ---
-      // If the hand is partially off-screen, the control point might be missing or invalid.
-      // This guard prevents the game from crashing due to undefined landmark coordinates.
       if (!isLandmarkVisible(controlPoint)) {
-        // Don't update the paddle; just exit the logic for this frame.
-        // The paddle will remain in its last valid position.
         return;
       }
-
-      // --- New Calibration Logic using FIST gesture ---
+      
+      // --- New WYSIWYG Calibration Logic ---
       if (gameStatusRef.current === 'calibrating' && gesture === 'fist') {
-          const aimPoint = handLandmarks[9]; // Use the same stable point for aiming and control
-
+          const aimPoint = handLandmarks[9];
           if (!isLandmarkVisible(aimPoint)) {
               return;
           }
-
-          const screenX = aimPoint.x;
-
-          // Update pointer position for visual feedback
-          setPointerPosition({ x: screenX, y: aimPoint.y });
-
-          // Define target areas (normalized coordinates)
-          const TARGET_RADIUS = 0.04; // Smaller radius for higher precision
-          const TARGET_TOP = { x: 0.15, y: 0.10 };
-          const TARGET_BOTTOM = { x: 0.15, y: 0.85 }; // Raised for better ergonomics
+          
+          // Define target areas (normalized coordinates) - Centered and more ergonomic
+          const TARGET_RADIUS = 0.05;
+          const TARGET_TOP =    { x: 0.5, y: 0.10 };
+          const TARGET_BOTTOM = { x: 0.5, y: 0.80 };
 
           if (calibrationStepRef.current === 'point_up' && !calibrationLockRef.current) {
-              const distance = Math.hypot(screenX - TARGET_TOP.x, aimPoint.y - TARGET_TOP.y);
+              // Provide direct 1:1 feedback by moving the preview paddle
+              setCalibrationPaddleY(aimPoint.y * GAME_HEIGHT);
+
+              const distance = Math.hypot(aimPoint.x - TARGET_TOP.x, aimPoint.y - TARGET_TOP.y);
               if (distance < TARGET_RADIUS) {
                   calibrationLockRef.current = true;
                   calibrationDataRef.current.min = aimPoint.y;
                   console.log(`Calibrated TOP boundary at: ${aimPoint.y}`);
                   setCalibrationFeedback(TARGET_TOP); // Trigger visual feedback
-                  setPointerPosition(null); // Hide pointer during feedback
+                  setCalibrationPaddleY(PADDLE_HEIGHT / 2); // SNAP paddle to top edge
                   setTimeout(() => {
                       setCalibrationStep('point_down');
                       setCalibrationFeedback(null);
@@ -384,13 +379,16 @@ const App: React.FC = () => {
                   }, 1000); // Wait 1s for feedback animation
               }
           } else if (calibrationStepRef.current === 'point_down' && !calibrationLockRef.current) {
-              const distance = Math.hypot(screenX - TARGET_BOTTOM.x, aimPoint.y - TARGET_BOTTOM.y);
+              // Provide direct 1:1 feedback by moving the preview paddle
+              setCalibrationPaddleY(aimPoint.y * GAME_HEIGHT);
+
+              const distance = Math.hypot(aimPoint.x - TARGET_BOTTOM.x, aimPoint.y - TARGET_BOTTOM.y);
               if (distance < TARGET_RADIUS) {
                   calibrationLockRef.current = true;
                   calibrationDataRef.current.max = aimPoint.y;
                   console.log(`Calibrated BOTTOM boundary at: ${aimPoint.y}`);
                   setCalibrationFeedback(TARGET_BOTTOM); // Trigger feedback
-                  setPointerPosition(null); // Hide pointer during feedback
+                  setCalibrationPaddleY(GAME_HEIGHT - PADDLE_HEIGHT / 2); // SNAP paddle to bottom edge
                   setTimeout(() => {
                       setCalibrationStep('finished');
                       setCalibrationFeedback(null);
@@ -398,11 +396,7 @@ const App: React.FC = () => {
                   }, 1000); // Wait 1s
               }
           }
-      } else {
-        // Clear pointer if not in calibration or not using the calibration gesture
-        setPointerPosition(null);
       }
-
 
       // --- Handle Game State Gestures (Pause/Reset/Start/Calibrate) with cooldown ---
       if (!gestureActionLockRef.current) {
@@ -431,20 +425,18 @@ const App: React.FC = () => {
           }
       }
       
-      // --- Handle Paddle Movement Gesture ---
-      if (gesture === 'fist') {
+      // --- Handle Paddle Movement Gesture (Only when running) ---
+      if (gameStatusRef.current === 'running' && gesture === 'fist') {
         const calibrationSpan = calibrationRangeRef.current.max - calibrationRangeRef.current.min;
         
-        if (calibrationSpan > 0.1) { // A valid calibration exists
-            // --- New robust mapping logic ---
-            // 1. Normalize hand position relative to the calibrated range.
+        // **DEFINITIVE CRASH FIX**: Proactively check if calibration is valid before using it.
+        // A span that is too small (e.g., from a failed calibration) will cause division by zero -> NaN -> crash.
+        const isCalibrationValid = calibrationSpan > 0.1;
+
+        if (isCalibrationValid) {
             let normalizedY = (controlPoint.y - calibrationRangeRef.current.min) / calibrationSpan;
 
-            // --- FINAL STABILITY FIX & DEBUG LOGGING ---
-            // This is the most critical check. The division above can result in NaN or Infinity
-            // if the calibration data is invalid (e.g., span is 0) or if MediaPipe returns
-            // an unusual value at the edge of the camera view. This check prevents that
-            // invalid number from propagating and crashing the game state/rendering.
+            // This check is a secondary defense against any unexpected values from MediaPipe
             if (!Number.isFinite(normalizedY)) {
                 setDebugInfo({
                     error: `Invalid normY: ${String(normalizedY)}`,
@@ -455,52 +447,38 @@ const App: React.FC = () => {
                 return; // PREVENT CRASH by skipping this frame's paddle update
             }
             
-            // 2. Clamp the normalized value between 0 and 1.
             const clampedNormalizedY = Math.max(0, Math.min(1, normalizedY));
-
-            // 3. Map the normalized value to the paddle's full on-screen travel range.
             const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
             const minPaddleY = PADDLE_HEIGHT / 2;
             const newY = (clampedNormalizedY * paddleTravelRange) + minPaddleY;
-            
             targetPlayerYRef.current = newY;
             
-            // Update debug logs for visibility
             setDebugInfo({
+                status: 'Calibrated',
                 rawY: controlPoint.y.toFixed(3),
                 normY: normalizedY.toFixed(3),
-                clampedY: newY.toFixed(3),
+                finalY: newY.toFixed(3),
             });
 
         } else {
-            // --- DEFINITIVE CRASH FIX: Bulletproof Fallback Logic ---
+            // --- Bulletproof Fallback Logic (if no valid calibration exists) ---
             const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
             const unmappedY = controlPoint.y * paddleTravelRange;
-
-            // 1. Check for invalid intermediate values.
-            if (!Number.isFinite(unmappedY)) {
-                setDebugInfo({ status: 'No calibration', error: 'Invalid unmappedY', rawY: controlPoint.y.toFixed(3) });
-                return; // PREVENT CRASH
-            }
+            if (!Number.isFinite(unmappedY)) { return; } // Safety check
 
             const newY = unmappedY + (PADDLE_HEIGHT / 2);
             const minPaddleY = PADDLE_HEIGHT / 2;
             const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
             const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
             
-            // 2. Final sanity check before setting the ref. This is the ultimate protection.
-            if (!Number.isFinite(clampedY)) {
-                setDebugInfo({ status: 'No calibration', error: 'Invalid clampedY', rawY: controlPoint.y.toFixed(3), newY: String(newY) });
-                return; // PREVENT CRASH
-            }
-
+            if (!Number.isFinite(clampedY)) { return; } // Final safety check
+            
             targetPlayerYRef.current = clampedY;
             setDebugInfo({ status: 'No calibration', rawY: controlPoint.y.toFixed(3), finalY: clampedY.toFixed(3) });
         }
       }
     } else {
       setCurrentGesture('unknown');
-      setPointerPosition(null);
     }
   }, [handleFullReset, startGame, startCalibrationSequence]);
 
@@ -582,7 +560,7 @@ const App: React.FC = () => {
       animationFrameId = requestAnimationFrame(smoothPaddleMovement);
     };
 
-    if (gameStatus === 'running' || gameStatus === 'paused' || gameStatus === 'calibrating') {
+    if (gameStatus === 'running' || gameStatus === 'paused') {
         lastFrameTimeRef.current = performance.now(); // Reset timer when starting
         animationFrameId = requestAnimationFrame(smoothPaddleMovement);
     } else {
@@ -645,11 +623,10 @@ const App: React.FC = () => {
     if (calibrationStep === 'finished') {
         setGameStatus('idle');
         setCalibrationStep('start'); // Reset for next time
+        setCalibrationPaddleY(null); // Hide preview paddle
 
         const capturedRange = calibrationDataRef.current;
         
-        // **CRITICAL FIX**: Ensure min is always less than max, regardless of calibration order.
-        // This prevents inverted controls and NaN errors that crash the game.
         const newMin = Math.min(capturedRange.min, capturedRange.max);
         const newMax = Math.max(capturedRange.min, capturedRange.max);
         const finalRange = { min: newMin, max: newMax };
@@ -658,7 +635,6 @@ const App: React.FC = () => {
         if (finalRange.max > 0 && (finalRange.max - finalRange.min > 0.1)) {
             setCalibrationRange(finalRange);
             
-            // Show success message
             setShowCalibrationSuccess(true);
             setTimeout(() => setShowCalibrationSuccess(false), 4000);
             console.log("Calibration successful. New range:", finalRange);
@@ -724,7 +700,7 @@ const App: React.FC = () => {
             onPointScored={handlePointScored}
             calibrationStep={gameStatus === 'calibrating' ? calibrationStep : null}
             calibrationFeedback={calibrationFeedback}
-            pointerPosition={pointerPosition}
+            calibrationPaddleY={calibrationPaddleY}
         />
          {aiMessage && (
           <div 
