@@ -8,6 +8,7 @@ import { setSoundEnabled } from './utils/sounds';
 
 // Declare MediaPipe and its utilities as global variables
 declare const window: any;
+//
 
 // --- Gemini API Logic ---
 let ai: GoogleGenAI | null = null;
