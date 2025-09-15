@@ -3,7 +3,7 @@ import { GoogleGenAI, Type } from "@google/genai";
 import GameCanvas from './components/GameCanvas';
 import InstructionOverlay from './components/InstructionOverlay';
 import { GAME_HEIGHT, PADDLE_HEIGHT, PADDLE_SMOOTHING_FACTOR } from './constants';
-import type { GameStatus, Difficulty, GestureType } from './types';
+import type { GameStatus, Difficulty } from './types';
 import { setSoundEnabled } from './utils/sounds';
 
 // Declare MediaPipe and its utilities as global variables
@@ -68,11 +68,25 @@ const generateAIResponses = async (): Promise<{ taunts: string[], praises: strin
 // --- Gesture Detection Logic ---
 type HandGesture = 'fist' | 'pointer' | 'spread' | 'thumbs_up' | 'thumbs_down' | 'victory' | 'open' | 'unknown';
 
+const isLandmarkVisible = (landmark: any) =>
+  landmark &&
+  typeof landmark.x === 'number' && Number.isFinite(landmark.x) &&
+  typeof landmark.y === 'number' && Number.isFinite(landmark.y) &&
+  typeof landmark.z === 'number' && Number.isFinite(landmark.z);
+
 const detectGesture = (landmarks: any[]): HandGesture => {
     if (!landmarks || landmarks.length < 21) {
         return 'unknown';
     }
 
+    // --- STABILITY FIX: Check for all necessary landmarks before processing ---
+    const requiredIndices = [0, 3, 4, 6, 8, 9, 10, 12, 14, 16, 18, 20];
+    for (const index of requiredIndices) {
+        if (!isLandmarkVisible(landmarks[index])) {
+            return 'unknown'; // Exit early if a key landmark is missing
+        }
+    }
+    
     // Landmark indices from MediaPipe Hands documentation
     const WRIST = 0;
     const THUMB_TIP = 4;
@@ -176,7 +190,6 @@ type CalibrationStep = 'start' | 'point_up' | 'point_down' | 'finished';
 const App: React.FC = () => {
   const [gameStatus, setGameStatus] = useState<GameStatus>('idle');
   const [difficulty, setDifficulty] = useState<Difficulty>('medium');
-  const [gestureType, setGestureType] = useState<GestureType>('fist');
   const [playerY, setPlayerY] = useState<number>(GAME_HEIGHT / 2);
   const [webcamReady, setWebcamReady] = useState<boolean>(false);
   const [persistentScore, setPersistentScore] = useState({ player: 0, computer: 0 });
@@ -202,6 +215,7 @@ const App: React.FC = () => {
   const [showCalibrationSuccess, setShowCalibrationSuccess] = useState(false);
   const [calibrationFeedback, setCalibrationFeedback] = useState<{x: number, y: number} | null>(null);
   const [pointerPosition, setPointerPosition] = useState<{x: number, y: number} | null>(null);
+  const [debugInfo, setDebugInfo] = useState<Record<string, string | number>>({});
   const calibrationDataRef = useRef({ min: 1, max: 0 });
   const calibrationLockRef = useRef(false);
   const gestureActionLockRef = useRef(false); // Cooldown for pause/reset gestures
@@ -215,9 +229,6 @@ const App: React.FC = () => {
   // --- Refs to mirror state for stable onResults callback ---
   const gameStatusRef = useRef(gameStatus);
   useEffect(() => { gameStatusRef.current = gameStatus; }, [gameStatus]);
-
-  const gestureTypeRef = useRef(gestureType);
-  useEffect(() => { gestureTypeRef.current = gestureType; }, [gestureType]);
 
   const calibrationRangeRef = useRef(calibrationRange);
   useEffect(() => { calibrationRangeRef.current = calibrationRange; }, [calibrationRange]);
@@ -279,6 +290,14 @@ const App: React.FC = () => {
     setSoundEnabled(isSoundEnabled);
   }, [isSoundEnabled]);
 
+  const startCalibrationSequence = useCallback(() => {
+    setGameStatus('calibrating');
+    calibrationDataRef.current = { min: 1, max: 0 }; // Reset for new capture
+    calibrationLockRef.current = false;
+    setCalibrationFeedback(null);
+    setCalibrationStep('point_up');
+  }, []);
+
   const handleFullReset = useCallback(() => {
     console.log("Performing full reset.");
     setPersistentScore({ player: 0, computer: 0 });
@@ -320,26 +339,41 @@ const App: React.FC = () => {
       const gesture = detectGesture(handLandmarks);
       setCurrentGesture(gesture);
       
-      // --- New Point-and-Hold Calibration Logic ---
-      if (gameStatusRef.current === 'calibrating' && gesture === 'pointer') {
-          const indexTip = handLandmarks[8]; // Index finger tip
-          const wrist = handLandmarks[0]; // Wrist position for mapping
-          const screenX = indexTip.x; // Direct mapping based on user feedback
+      const controlPoint = handLandmarks[9]; // Use MIDDLE_FINGER_MCP as the stable control point
+
+      // --- CRITICAL STABILITY FIX ---
+      // If the hand is partially off-screen, the control point might be missing or invalid.
+      // This guard prevents the game from crashing due to undefined landmark coordinates.
+      if (!isLandmarkVisible(controlPoint)) {
+        // Don't update the paddle; just exit the logic for this frame.
+        // The paddle will remain in its last valid position.
+        return;
+      }
+
+      // --- New Calibration Logic using FIST gesture ---
+      if (gameStatusRef.current === 'calibrating' && gesture === 'fist') {
+          const aimPoint = handLandmarks[9]; // Use the same stable point for aiming and control
+
+          if (!isLandmarkVisible(aimPoint)) {
+              return;
+          }
+
+          const screenX = aimPoint.x;
 
           // Update pointer position for visual feedback
-          setPointerPosition({ x: screenX, y: indexTip.y });
+          setPointerPosition({ x: screenX, y: aimPoint.y });
 
           // Define target areas (normalized coordinates)
           const TARGET_RADIUS = 0.04; // Smaller radius for higher precision
           const TARGET_TOP = { x: 0.15, y: 0.10 };
-          const TARGET_BOTTOM = { x: 0.15, y: 0.90 };
+          const TARGET_BOTTOM = { x: 0.15, y: 0.85 }; // Raised for better ergonomics
 
           if (calibrationStepRef.current === 'point_up' && !calibrationLockRef.current) {
-              const distance = Math.hypot(screenX - TARGET_TOP.x, indexTip.y - TARGET_TOP.y);
+              const distance = Math.hypot(screenX - TARGET_TOP.x, aimPoint.y - TARGET_TOP.y);
               if (distance < TARGET_RADIUS) {
                   calibrationLockRef.current = true;
-                  calibrationDataRef.current.min = wrist.y;
-                  console.log(`Calibrated TOP boundary at: ${wrist.y}`);
+                  calibrationDataRef.current.min = aimPoint.y;
+                  console.log(`Calibrated TOP boundary at: ${aimPoint.y}`);
                   setCalibrationFeedback(TARGET_TOP); // Trigger visual feedback
                   setPointerPosition(null); // Hide pointer during feedback
                   setTimeout(() => {
@@ -349,11 +383,11 @@ const App: React.FC = () => {
                   }, 1000); // Wait 1s for feedback animation
               }
           } else if (calibrationStepRef.current === 'point_down' && !calibrationLockRef.current) {
-              const distance = Math.hypot(screenX - TARGET_BOTTOM.x, indexTip.y - TARGET_BOTTOM.y);
+              const distance = Math.hypot(screenX - TARGET_BOTTOM.x, aimPoint.y - TARGET_BOTTOM.y);
               if (distance < TARGET_RADIUS) {
                   calibrationLockRef.current = true;
-                  calibrationDataRef.current.max = wrist.y;
-                  console.log(`Calibrated BOTTOM boundary at: ${wrist.y}`);
+                  calibrationDataRef.current.max = aimPoint.y;
+                  console.log(`Calibrated BOTTOM boundary at: ${aimPoint.y}`);
                   setCalibrationFeedback(TARGET_BOTTOM); // Trigger feedback
                   setPointerPosition(null); // Hide pointer during feedback
                   setTimeout(() => {
@@ -364,7 +398,7 @@ const App: React.FC = () => {
               }
           }
       } else {
-        // Clear pointer if not in calibration or not pointing
+        // Clear pointer if not in calibration or not using the calibration gesture
         setPointerPosition(null);
       }
 
@@ -372,7 +406,7 @@ const App: React.FC = () => {
       // --- Handle Game State Gestures (Pause/Reset/Start/Calibrate) with cooldown ---
       if (!gestureActionLockRef.current) {
           if (gesture === 'victory' && gameStatusRef.current === 'idle') {
-              setGameStatus('calibrating');
+              startCalibrationSequence();
               gestureActionLockRef.current = true;
               setTimeout(() => { gestureActionLockRef.current = false; }, 2000); // 2s cooldown
           } else if (gesture === 'spread') {
@@ -397,45 +431,77 @@ const App: React.FC = () => {
       }
       
       // --- Handle Paddle Movement Gesture ---
-      if (gesture === gestureTypeRef.current) {
-        const wrist = handLandmarks[0];
-        if (wrist) {
-          const calibrationSpan = calibrationRangeRef.current.max - calibrationRangeRef.current.min;
-          let newY: number;
+      if (gesture === 'fist') {
+        const calibrationSpan = calibrationRangeRef.current.max - calibrationRangeRef.current.min;
+        
+        if (calibrationSpan > 0.1) { // A valid calibration exists
+            // --- New robust mapping logic ---
+            // 1. Normalize hand position relative to the calibrated range.
+            let normalizedY = (controlPoint.y - calibrationRangeRef.current.min) / calibrationSpan;
 
-          if (calibrationSpan > 0.1) { // A valid calibration exists
-              // --- New robust mapping logic ---
-              // 1. Normalize hand position relative to the calibrated range.
-              let normalizedY = (wrist.y - calibrationRangeRef.current.min) / calibrationSpan;
+            // --- FINAL STABILITY FIX & DEBUG LOGGING ---
+            // This is the most critical check. The division above can result in NaN or Infinity
+            // if the calibration data is invalid (e.g., span is 0) or if MediaPipe returns
+            // an unusual value at the edge of the camera view. This check prevents that
+            // invalid number from propagating and crashing the game state/rendering.
+            if (!Number.isFinite(normalizedY)) {
+                setDebugInfo({
+                    error: `Invalid normY: ${String(normalizedY)}`,
+                    rawY: controlPoint.y.toFixed(4),
+                    calibMin: calibrationRangeRef.current.min.toFixed(4),
+                    calibMax: calibrationRangeRef.current.max.toFixed(4),
+                });
+                return; // PREVENT CRASH by skipping this frame's paddle update
+            }
+            
+            // 2. Clamp the normalized value between 0 and 1.
+            const clampedNormalizedY = Math.max(0, Math.min(1, normalizedY));
 
-              // 2. Clamp the normalized value between 0 and 1.
-              // This ensures moving your hand past the calibrated points keeps the paddle at the edge.
-              normalizedY = Math.max(0, Math.min(1, normalizedY));
+            // 3. Map the normalized value to the paddle's full on-screen travel range.
+            const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
+            const minPaddleY = PADDLE_HEIGHT / 2;
+            const newY = (clampedNormalizedY * paddleTravelRange) + minPaddleY;
+            
+            targetPlayerYRef.current = newY;
+            
+            // Update debug logs for visibility
+            setDebugInfo({
+                rawY: controlPoint.y.toFixed(3),
+                normY: normalizedY.toFixed(3),
+                clampedY: newY.toFixed(3),
+            });
 
-              // 3. Map the normalized value to the paddle's full on-screen travel range.
-              const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
-              const minPaddleY = PADDLE_HEIGHT / 2;
-              newY = (normalizedY * paddleTravelRange) + minPaddleY;
+        } else {
+            // --- DEFINITIVE CRASH FIX: Bulletproof Fallback Logic ---
+            const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
+            const unmappedY = controlPoint.y * paddleTravelRange;
 
-          } else {
-              // Fallback to default full-range mapping if no valid calibration.
-              const paddleTravelRange = GAME_HEIGHT - PADDLE_HEIGHT;
-              newY = (wrist.y * paddleTravelRange) + (PADDLE_HEIGHT / 2);
-          }
+            // 1. Check for invalid intermediate values.
+            if (!Number.isFinite(unmappedY)) {
+                setDebugInfo({ status: 'No calibration', error: 'Invalid unmappedY', rawY: controlPoint.y.toFixed(3) });
+                return; // PREVENT CRASH
+            }
 
-          // Final clamp for the fallback case, and as a safety net.
-          const minPaddleY = PADDLE_HEIGHT / 2;
-          const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
-          const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
-          
-          targetPlayerYRef.current = clampedY;
+            const newY = unmappedY + (PADDLE_HEIGHT / 2);
+            const minPaddleY = PADDLE_HEIGHT / 2;
+            const maxPaddleY = GAME_HEIGHT - PADDLE_HEIGHT / 2;
+            const clampedY = Math.max(minPaddleY, Math.min(newY, maxPaddleY));
+            
+            // 2. Final sanity check before setting the ref. This is the ultimate protection.
+            if (!Number.isFinite(clampedY)) {
+                setDebugInfo({ status: 'No calibration', error: 'Invalid clampedY', rawY: controlPoint.y.toFixed(3), newY: String(newY) });
+                return; // PREVENT CRASH
+            }
+
+            targetPlayerYRef.current = clampedY;
+            setDebugInfo({ status: 'No calibration', rawY: controlPoint.y.toFixed(3), finalY: clampedY.toFixed(3) });
         }
       }
     } else {
       setCurrentGesture('unknown');
       setPointerPosition(null);
     }
-  }, [handleFullReset, startGame]);
+  }, [handleFullReset, startGame, startCalibrationSequence]);
 
   useEffect(() => {
     if (typeof window.Hands === 'undefined') {
@@ -574,33 +640,33 @@ const App: React.FC = () => {
     };
   }, []);
 
-  const startCalibrationSequence = useCallback(() => {
-    calibrationDataRef.current = { min: 1, max: 0 }; // Reset for new capture
-    calibrationLockRef.current = false;
-    setCalibrationFeedback(null);
-    setCalibrationStep('point_up');
-  }, []);
-
   useEffect(() => {
     if (calibrationStep === 'finished') {
         setGameStatus('idle');
         setCalibrationStep('start'); // Reset for next time
 
-        const newRange = calibrationDataRef.current;
+        const capturedRange = calibrationDataRef.current;
+        
+        // **CRITICAL FIX**: Ensure min is always less than max, regardless of calibration order.
+        // This prevents inverted controls and NaN errors that crash the game.
+        const newMin = Math.min(capturedRange.min, capturedRange.max);
+        const newMax = Math.max(capturedRange.min, capturedRange.max);
+        const finalRange = { min: newMin, max: newMax };
+
         // Check if a valid range was captured
-        if (newRange.min < newRange.max && (newRange.max - newRange.min > 0.1)) {
-            // Use ONLY the latest calibration data. This is more robust than averaging.
-            setCalibrationRange({ min: newRange.min, max: newRange.max });
+        if (finalRange.max > 0 && (finalRange.max - finalRange.min > 0.1)) {
+            setCalibrationRange(finalRange);
             
             // Show success message
             setShowCalibrationSuccess(true);
             setTimeout(() => setShowCalibrationSuccess(false), 4000);
-            console.log("Calibration successful. New range:", newRange);
+            console.log("Calibration successful. New range:", finalRange);
         } else {
-            console.warn("Calibration failed: insufficient or invalid movement detected.", newRange);
+            console.warn("Calibration failed: insufficient or invalid movement detected.", capturedRange);
         }
     }
-}, [calibrationStep]);
+  }, [calibrationStep]);
+
 
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-black text-white font-mono p-4 relative">
@@ -635,7 +701,7 @@ const App: React.FC = () => {
       </div>
 
       <div className="relative w-full max-w-4xl aspect-[16/9] bg-gray-900 border-4 border-lime-400 shadow-[0_0_20px_#0f0] rounded-lg overflow-hidden">
-        {gameStatus !== 'running' && (
+        {gameStatus !== 'running' && gameStatus !== 'calibrating' && (
           <InstructionOverlay
             status={gameStatus}
             onStart={startGame}
@@ -643,10 +709,6 @@ const App: React.FC = () => {
             webcamReady={webcamReady}
             difficulty={difficulty}
             onDifficultyChange={setDifficulty}
-            gestureType={gestureType}
-            onGestureTypeChange={setGestureType}
-            onStartCalibrationSequence={startCalibrationSequence}
-            calibrationStep={calibrationStep}
             showCalibrationSuccess={showCalibrationSuccess}
             isSoundEnabled={isSoundEnabled}
             onSoundToggle={setIsSoundEnabled}
@@ -708,6 +770,15 @@ const App: React.FC = () => {
                 />
             </div>
         </div>
+      </div>
+       {/* On-screen Debug Logs */}
+       <div className="absolute bottom-4 left-4 bg-black/70 text-white p-2 rounded-md font-mono text-xs z-50 border border-gray-700">
+        <h4 className="font-bold text-lime-400 border-b border-gray-600 mb-1 pb-1">Debug Info</h4>
+        {Object.entries(debugInfo).map(([key, value]) => (
+          <p key={key} className={key === 'error' ? 'text-red-500' : ''}>
+            <span className="text-gray-400">{key}:</span> {String(value)}
+          </p>
+        ))}
       </div>
     </div>
   );

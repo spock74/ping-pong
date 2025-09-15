@@ -100,34 +100,50 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     ctx.fillText(score.computer.toString(), (GAME_WIDTH * 3) / 4, 70);
 
      // --- Draw Calibration UI ---
-    if (status === 'calibrating') {
-        if (calibrationStep) {
-            const drawTarget = (x: number, y: number, color: string) => {
-                ctx.save();
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 3;
-                ctx.shadowBlur = 15;
-                ctx.shadowColor = color;
-                // Draw a reticle
-                ctx.beginPath();
-                ctx.arc(x, y, 30, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(x - 40, y);
-                ctx.lineTo(x + 40, y);
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.moveTo(x, y - 40);
-                ctx.lineTo(x, y + 40);
-                ctx.stroke();
-                ctx.restore();
-            }
+    if (status === 'calibrating' && calibrationStep) {
+        // Draw instructions
+        ctx.save();
+        ctx.fillStyle = '#00ff00';
+        ctx.shadowColor = '#00ff00';
+        ctx.shadowBlur = 10;
+        ctx.font = '48px "Courier New", Courier, monospace';
+        ctx.textAlign = 'center';
+        let text = '';
+        if (calibrationStep === 'point_up') {
+            text = 'Mova a mão fechada ao alvo de CIMA ⬆️';
+        } else if (calibrationStep === 'point_down') {
+            text = 'Agora ao alvo de BAIXO ⬇️';
+        }
+        if (text) {
+            ctx.fillText(text, GAME_WIDTH / 2, GAME_HEIGHT / 2);
+        }
+        ctx.restore();
 
-            if (calibrationStep === 'point_up') {
-                drawTarget(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.10, '#00ff00');
-            } else if (calibrationStep === 'point_down') {
-                drawTarget(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.90, '#00ff00');
-            }
+        const drawTarget = (x: number, y: number, color: string) => {
+            ctx.save();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 3;
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = color;
+            // Draw a reticle
+            ctx.beginPath();
+            ctx.arc(x, y, 30, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x - 40, y);
+            ctx.lineTo(x + 40, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y - 40);
+            ctx.lineTo(x, y + 40);
+            ctx.stroke();
+            ctx.restore();
+        }
+
+        if (calibrationStep === 'point_up') {
+            drawTarget(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.10, '#00ff00');
+        } else if (calibrationStep === 'point_down') {
+            drawTarget(GAME_WIDTH * 0.15, GAME_HEIGHT * 0.85, '#00ff00');
         }
         
         // Draw pointer feedback dot
@@ -168,8 +184,19 @@ const GameCanvas: React.FC<GameCanvasProps> = ({ status, playerY, setGameStatus,
     let animationFrameId: number;
 
     const gameLoop = (timestamp: number) => {
-      const dt = (timestamp - lastTimeRef.current) / 1000; // Delta time in seconds
+      let dt = (timestamp - lastTimeRef.current) / 1000; // Delta time in seconds
       lastTimeRef.current = timestamp;
+
+      // CRITICAL STABILITY FIX: Clamp delta time to prevent physics glitches.
+      // If the tab is backgrounded, dt can become very large, causing the ball
+      // to teleport through paddles or cause other calculation errors.
+      // We cap it at a reasonable maximum, e.g., 50ms (20 FPS).
+      dt = Math.max(0, Math.min(dt, 0.05));
+      if (dt === 0) {
+        animationFrameId = requestAnimationFrame(gameLoop);
+        return; // Skip update if no time has passed.
+      }
+
 
       // 1. Calculate next state based on current state
       let nextBall = { 
